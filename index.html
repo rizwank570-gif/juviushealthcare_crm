@@ -2035,9 +2035,14 @@
                 if (t.sampleType) t.sampleType.split(',').forEach(s => sampleSet.add(s.trim()));
                 if (t.tubes) t.tubes.split(',').forEach(tub => tubesSet.add(tub.trim()));
 
+                const activeUser = window.getActiveUser();
+                const isRestrictedUser = activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive';
+                const isEditing = document.getElementById('hiddenBookingPackage') && document.getElementById('hiddenBookingPackage').form.elements['id'];
+                const removeBtnHTML = (isRestrictedUser && isEditing) ? '' : `<button type="button" onclick="window.removeTestFromBooking(${i})" class="text-red-500 hover:text-red-700 ml-1"><i data-lucide="x" class="w-3 h-3"></i></button>`;
+
                 return `<div class="bg-brand-50 border border-brand-200 text-brand-800 text-[10px] px-2 py-1 rounded flex items-center gap-1 font-bold shadow-sm">
                     ${name} (₹${price}) 
-                    <button type="button" onclick="window.removeTestFromBooking(${i})" class="text-red-500 hover:text-red-700 ml-1"><i data-lucide="x" class="w-3 h-3"></i></button>
+                    ${removeBtnHTML}
                 </div>`;
             }).join('');
             
@@ -2270,6 +2275,31 @@
                                     });
                                     window.renderBookingTests();
                                 }
+
+                                // Apply Restricted User Edit Locks
+                                const activeUser = window.getActiveUser();
+                                const isRestrictedUser = activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive';
+                                if (isRestrictedUser) {
+                                    const isSampleReached = item.sampleReached === true;
+                                    const allowedFields = ['patientName', 'age', 'gender'];
+                                    
+                                    Array.from(form.elements).forEach(el => {
+                                        if (el.tagName === 'BUTTON') return; 
+                                        if (isSampleReached) {
+                                            el.disabled = true;
+                                        } else if (!allowedFields.includes(el.name)) {
+                                            el.disabled = true;
+                                        }
+                                    });
+                                    
+                                    if (isSampleReached && submitBtn) {
+                                        submitBtn.style.display = 'none';
+                                    }
+                                    
+                                    const addTestBtn = form.querySelector('button[onclick="window.addTestToBooking()"]');
+                                    if (addTestBtn) addTestBtn.style.display = 'none';
+                                }
+
                             }, 50);
                         }
                     }, 50);
