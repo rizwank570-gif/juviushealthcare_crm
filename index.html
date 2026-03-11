@@ -62,7 +62,7 @@
         .btn-sample:hover { background-color: #dcfce7; }
         
         .package-card { background: white; border: 1px solid #E5E7EB; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; z-index: 1; }
-        .status-badge { background-color: #f0fdf4; color: #15803d; padding: 4px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; border: 1px solid rgba(21, 128, 61, 0.1); }
+        .status-badge { padding: 4px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; border: 1px solid; }
         
         .input-field { width: 100%; padding: 10px 14px; background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; font-size: 14px; font-weight: 500; }
         .input-field:focus { outline: none; border-color: #15803d; background-color: white; box-shadow: 0 0 0 2px rgba(21, 128, 61, 0.1); }
@@ -82,7 +82,7 @@
 <body class="overflow-hidden">
 
     <!-- Login Overlay -->
-    <div id="auth-overlay" class="fixed inset-0 bg-gray-900 z-[100] flex items-center justify-center hidden">
+    <div id="auth-overlay" class="fixed inset-0 bg-gray-900 z-[100] flex items-center justify-center">
         <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md scale-in">
             <div class="flex items-center gap-3 mb-6 justify-center">
                 <img src="https://drive.google.com/thumbnail?id=1GMNSIb_uMAwqBQxzp2PQTXMnhiH0Gv6-&sz=w200" alt="Juvius Logo" class="w-10 h-10 object-contain">
@@ -140,7 +140,7 @@
                     <h2 id="active-tab-title" class="text-xl font-black capitalize text-brand-900 tracking-tight">Dashboard</h2>
                 </div>
                 <div class="flex items-center gap-4">
-                    <div class="flex items-center gap-2 bg-brand-50 px-3 py-1.5 rounded-full border border-brand-100 shadow-sm">
+                    <div id="simulator-container" class="flex items-center gap-2 bg-brand-50 px-3 py-1.5 rounded-full border border-brand-100 shadow-sm hidden">
                         <i data-lucide="user-circle" class="w-4 h-4 text-brand-600"></i>
                         <select id="user-simulator" onchange="window.setSimulatedUser(this.value)" class="text-[10px] font-black text-brand-800 outline-none cursor-pointer bg-transparent uppercase tracking-widest appearance-none">
                             <option value="admin">View As: Admin System</option>
@@ -168,7 +168,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, collection, doc, addDoc, onSnapshot, deleteDoc, query, setDoc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, addDoc, onSnapshot, deleteDoc, query, setDoc, updateDoc, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, onAuthStateChanged, signInAnonymously, signOut, signInWithCustomToken, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
 
@@ -190,11 +190,16 @@
         const db = getFirestore(app);
         const APP_ID = typeof __app_id !== 'undefined' ? __app_id : "juvius-healthcare-crm";
 
-        window.crmData = { clients: [], camps: [], phlebos: [], packages: [], tests: [], vendors: [], partners: [], bookings: [], logistics: [], users: [] };
+        window.crmData = { clients: [], camps: [], phlebos: [], packages: [], tests: [], vendors: [], partners: [], partner_labs: [], bookings: [], logistics: [], users: [] };
         window.activeTab = 'dashboard';
         window.searchTerm = "";
         window.currentSimulatedUser = null;
         window.loggedInUserEmail = null; // Track authenticated user
+        window.bookingFilters = { partner: '', collectionDate: '', bookingDate: '' };
+        window.testMasterFilter = '';
+        window.currentBookingTestsList = []; // Tracks dynamically added booking tests
+        window.currentCampTestsList = []; // Tracks dynamically added camp tests
+        window.pendingLabTests = []; // Tracks parsed CSV data for Partner Labs
 
         const tabs = [
             { id: 'dashboard', label: 'Overview', icon: 'layout-dashboard' },
@@ -203,6 +208,7 @@
             { id: 'phlebos', label: 'Phlebotomists', icon: 'user-check' },
             { id: 'vendors', label: 'Vendors', icon: 'briefcase' },
             { id: 'partners', label: 'Partners', icon: 'network' },
+            { id: 'partner_labs', label: 'Partner Labs', icon: 'flask-conical' },
             { id: 'bookings', label: 'Bookings', icon: 'calendar-plus' },
             { id: 'logistics', label: 'Logistics', icon: 'truck' },
             { id: 'upload_reports', label: 'Upload Reports', icon: 'upload-cloud' },
@@ -210,6 +216,33 @@
             { id: 'users', label: 'User Management', icon: 'users' },
             { id: 'tests', label: 'Test Master', icon: 'test-tubes' }
         ];
+
+        // Access checking helper
+        window.checkIsAdmin = () => {
+            if (window.currentSimulatedUser) {
+                return window.currentSimulatedUser.role === 'Admin' || window.currentSimulatedUser.role === 'Executive';
+            }
+            if (window.loggedInUserEmail && window.crmData.users && window.crmData.users.length > 0) {
+                const u = window.crmData.users.find(x => x.email.toLowerCase() === window.loggedInUserEmail.toLowerCase());
+                return u ? (u.role === 'Admin' || u.role === 'Executive') : true; // Default true in anonymous preview
+            }
+            return true;
+        };
+
+        window.getActiveUser = () => {
+            if (window.currentSimulatedUser) return window.currentSimulatedUser;
+            if (window.loggedInUserEmail && window.crmData.users && window.crmData.users.length > 0) {
+                return window.crmData.users.find(u => u.email.toLowerCase() === window.loggedInUserEmail.toLowerCase());
+            }
+            return null;
+        };
+
+        window.hasActionRight = (actionName) => {
+            const u = window.getActiveUser();
+            if (!u) return true; // default to true if no user system active
+            if (u.role === 'Admin') return true;
+            return u.actionRights && u.actionRights.includes(actionName);
+        };
 
         async function startApp() {
             onAuthStateChanged(auth, user => {
@@ -224,7 +257,6 @@
             });
 
             try {
-                // strict auth sequence rules for the Canvas environment
                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 }
@@ -261,7 +293,7 @@
         function setupRealtimeSync() {
             if (!auth.currentUser) return; // Guard clause
             
-            const collections = ['clients', 'camps', 'phlebos', 'packages', 'tests', 'vendors', 'partners', 'bookings', 'logistics', 'users'];
+            const collections = ['clients', 'camps', 'phlebos', 'packages', 'tests', 'vendors', 'partners', 'partner_labs', 'bookings', 'logistics', 'users'];
             collections.forEach(name => {
                 const q = collection(db, 'artifacts', APP_ID, 'public', 'data', name);
                 onSnapshot(q, snap => {
@@ -279,11 +311,25 @@
 
         window.updateSimulatorDropdown = () => {
             const simSelect = document.getElementById('user-simulator');
+            const simContainer = document.getElementById('simulator-container');
+            
             if (simSelect) {
                 const currentVal = window.currentSimulatedUser ? window.currentSimulatedUser.id : 'admin';
                 simSelect.innerHTML = '<option value="admin">View As: Admin System</option>' + 
                     window.crmData.users.map(u => `<option value="${u.id}">${u.name} (${u.role})</option>`).join('');
                 simSelect.value = currentVal;
+            }
+            
+            // Check User Role to unhide simulator only for Admin
+            if (simContainer) {
+                let isAdmin = true; 
+                if (window.loggedInUserEmail && window.crmData.users && window.crmData.users.length > 0) {
+                    const userProfile = window.crmData.users.find(u => u.email.toLowerCase() === window.loggedInUserEmail.toLowerCase());
+                    if (userProfile && userProfile.role !== 'Admin') isAdmin = false;
+                }
+                
+                if (isAdmin) simContainer.classList.remove('hidden');
+                else simContainer.classList.add('hidden');
             }
         };
 
@@ -301,11 +347,8 @@
         };
 
         window.switchTab = (id) => {
-            // Enforce access control on manual tab switches
             const navMenu = document.getElementById('nav-menu');
-            if (id !== 'dashboard' && navMenu && !navMenu.innerHTML.includes(`switchTab('${id}')`)) {
-                return; // Block access
-            }
+            if (id !== 'dashboard' && navMenu && !navMenu.innerHTML.includes(`switchTab('${id}')`)) return;
 
             window.activeTab = id;
             document.getElementById('active-tab-title').innerText = tabs.find(t => t.id === id)?.label || 'Dashboard';
@@ -313,23 +356,32 @@
             renderActiveTab();
         };
 
+        window.handleBookingFilterChange = (key, val) => {
+            window.bookingFilters[key] = val;
+            renderActiveTab();
+        };
+
+        window.clearBookingFilters = () => {
+            window.bookingFilters = { partner: '', collectionDate: '', bookingDate: '' };
+            renderActiveTab();
+        };
+
+        window.handleTestMasterFilterChange = (val) => {
+            window.testMasterFilter = val;
+            renderActiveTab();
+        };
+
         window.renderNav = () => {
             let allowedTabs = tabs;
             
-            // Apply Access Controls based on logged in user's role from DB
             if (window.loggedInUserEmail && window.crmData.users && window.crmData.users.length > 0) {
                 const userProfile = window.crmData.users.find(u => u.email.toLowerCase() === window.loggedInUserEmail.toLowerCase());
-                
-                // If not an Admin, restrict tabs
                 if (userProfile && userProfile.role !== 'Admin') {
                     allowedTabs = tabs.filter(t => {
-                        if (t.id === 'dashboard') return true; // Always visible
-                        if (t.id === 'users') return false; // Strictly restricted to Admin
-                        
-                        // Check assigned access rights
+                        if (t.id === 'dashboard') return true;
+                        if (t.id === 'users') return false; 
                         const rights = Array.isArray(userProfile.accessRights) ? userProfile.accessRights : 
                                       (userProfile.accessRights ? String(userProfile.accessRights).split(',') : []);
-                        
                         return rights.includes(t.label);
                     });
                 }
@@ -346,7 +398,6 @@
         };
 
         window.handleSearch = (val) => {
-            // Automatically trim accidental whitespace from copy-pasting IDs
             window.searchTerm = val ? val.trim().toLowerCase() : "";
             renderActiveTab();
         };
@@ -362,6 +413,7 @@
             else if (window.activeTab === 'phlebos') renderPhlebos(container, data, s);
             else if (window.activeTab === 'vendors') renderVendors(container, data, s);
             else if (window.activeTab === 'partners') renderPartners(container, data, s);
+            else if (window.activeTab === 'partner_labs') renderPartnerLabs(container, data, s);
             else if (window.activeTab === 'bookings') renderBookings(container, data, s);
             else if (window.activeTab === 'logistics') renderLogistics(container, data, s);
             else if (window.activeTab === 'upload_reports') renderUploadReports(container, data, s);
@@ -374,10 +426,16 @@
         // --- View Builders ---
 
         function renderDashboard(el, data) {
+            const activeUser = window.getActiveUser();
+            const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+            
+            const campsCount = restrictEntity ? data.camps.filter(c => c.clientName === restrictEntity).length : data.camps.length;
+            const bookingsCount = restrictEntity ? data.bookings.filter(b => b.entityName === restrictEntity).length : data.bookings.length;
+
             el.innerHTML = `
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-                    <div class="package-card p-6 flex justify-between items-center"><div><p class="form-label">Total Camps</p><h3 class="text-3xl font-black">${data.camps.length}</h3></div><div class="p-3 bg-brand-50 text-brand-700 rounded-xl"><i data-lucide="map-pin"></i></div></div>
-                    <div class="package-card p-6 flex justify-between items-center"><div><p class="form-label">Patient Bookings</p><h3 class="text-3xl font-black">${data.bookings.length}</h3></div><div class="p-3 bg-brand-50 text-brand-700 rounded-xl"><i data-lucide="calendar"></i></div></div>
+                    <div class="package-card p-6 flex justify-between items-center"><div><p class="form-label">Total Camps</p><h3 class="text-3xl font-black">${campsCount}</h3></div><div class="p-3 bg-brand-50 text-brand-700 rounded-xl"><i data-lucide="map-pin"></i></div></div>
+                    <div class="package-card p-6 flex justify-between items-center"><div><p class="form-label">Patient Bookings</p><h3 class="text-3xl font-black">${bookingsCount}</h3></div><div class="p-3 bg-brand-50 text-brand-700 rounded-xl"><i data-lucide="calendar"></i></div></div>
                     <div class="package-card p-6 flex justify-between items-center"><div><p class="form-label">Field Force</p><h3 class="text-3xl font-black">${data.phlebos.length}</h3></div><div class="p-3 bg-brand-50 text-brand-700 rounded-xl"><i data-lucide="user-check"></i></div></div>
                     <div class="package-card p-6 flex justify-between items-center"><div><p class="form-label">Partners</p><h3 class="text-3xl font-black">${data.partners.length}</h3></div><div class="p-3 bg-gray-50 text-gray-700 rounded-xl"><i data-lucide="network"></i></div></div>
                 </div>
@@ -425,23 +483,26 @@
         }
 
         function renderCamps(el, data, s) {
+            const activeUser = window.getActiveUser();
+            const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+            const canEdit = window.hasActionRight('Edit Camps');
+            const canDelete = window.hasActionRight('Delete Camps');
+            const canApprove = window.hasActionRight('Approve Records');
+            
             const filtered = data.camps.filter(c => {
-                if (window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity) {
-                    if (c.clientName !== window.currentSimulatedUser.associatedEntity) return false;
-                }
+                if (restrictEntity && c.clientName !== restrictEntity) return false;
                 if (!s) return true;
-                
-                // Priority Exact/Partial match for Camp ID
                 if (c.campCode && c.campCode.toLowerCase().includes(s)) return true;
-
                 return [c.clientName, c.city, c.address, c.assignedPhlebo, c.spocName, c.packageName].filter(Boolean).join(' ').toLowerCase().includes(s);
             });
+
             el.innerHTML = `
                 <div class="flex flex-col md:flex-row items-center justify-between mb-6 gap-4">
                     <div class="flex flex-wrap gap-3">
                         <button onclick="showModal('camp')" class="btn-primary shadow-lg"><i data-lucide="plus"></i> Register Camp</button>
                         <button onclick="triggerBulk('camps')" class="btn-secondary font-bold text-xs uppercase">Bulk Load</button>
                         <button onclick="downloadSampleCSV('camps')" class="btn-sample"><i data-lucide="download-cloud" class="w-4 h-4"></i> Sample CSV</button>
+                        ${canApprove ? `<button onclick="approveSelected('camps')" class="btn-primary bg-blue-600 hover:bg-blue-700 shadow-lg text-xs uppercase tracking-widest"><i data-lucide="check-circle" class="w-4 h-4"></i> Approve Selected</button>` : ''}
                     </div>
                     
                     <!-- Date Range Export -->
@@ -462,10 +523,20 @@
                 </div>
                 <div class="package-card overflow-hidden">
                     <table class="w-full text-left text-sm">
-                        <thead class="bg-gray-50"><tr><th class="table-header">Camp ID</th><th class="table-header">Client/Venue</th><th class="table-header">Counts</th><th class="table-header">Schedule</th><th class="table-header">Alignment</th><th class="table-header text-right">Actions</th></tr></thead>
+                        <thead class="bg-gray-50"><tr>
+                            ${canApprove ? `<th class="table-header px-4 w-12 text-center"><input type="checkbox" onchange="toggleSelectAll(this, '.row-checkbox-camps')" class="w-4 h-4 accent-brand-600 rounded cursor-pointer"></th>` : ''}
+                            <th class="table-header">Camp ID</th><th class="table-header">Client/Venue</th><th class="table-header">Counts</th><th class="table-header">Schedule</th><th class="table-header">Alignment & Status</th><th class="table-header text-right">Actions</th>
+                        </tr></thead>
                         <tbody class="divide-y">
-                            ${filtered.map(c => `
+                            ${filtered.map(c => {
+                                let badgeColor = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                                let statusText = 'Pending Approval';
+                                if (c.assignedPhlebo) { badgeColor = 'bg-brand-50 text-brand-700 border-brand-200'; statusText = 'Aligned'; }
+                                else if (c.approvalStatus === 'Approved') { badgeColor = 'bg-blue-50 text-blue-700 border-blue-200'; statusText = 'Approved'; }
+
+                                return `
                                 <tr class="hover:bg-brand-50/20 transition-colors">
+                                    ${canApprove ? `<td class="px-4 py-5 text-center"><input type="checkbox" value="${c.id}" class="row-checkbox-camps w-4 h-4 accent-brand-600 rounded cursor-pointer"></td>` : ''}
                                     <td class="px-6 py-5 font-black text-brand-800 font-mono tracking-tighter">${c.campCode}</td>
                                     <td class="px-6 py-5 font-bold">
                                         <p>${c.clientName}</p>
@@ -474,17 +545,18 @@
                                     <td class="px-6 py-5 font-black text-gray-600">${c.totalCounts}</td>
                                     <td class="px-6 py-5 text-[10px] font-black text-gray-700 tracking-tighter">${c.startDate}<br/><span class="text-gray-400 font-black">${c.campTime}</span></td>
                                     <td class="px-6 py-5">
-                                        <span class="status-badge ${c.assignedPhlebo ? 'bg-brand-50 text-brand-700 border-brand-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}">${c.assignedPhlebo ? 'Aligned' : 'Pending Alignment'}</span><br/>
+                                        <span class="status-badge ${badgeColor}">${statusText}</span><br/>
                                         <span class="text-[9px] font-bold text-gray-500 uppercase mt-1.5 inline-block">Phlebo: <span class="text-gray-800">${c.assignedPhlebo || 'Unassigned'}</span></span>
                                         ${c.staffAligned ? `<br/><span class="text-[9px] font-bold text-gray-500 uppercase mt-0.5 inline-block">Total Staff Aligned: <span class="text-gray-800">${c.staffAligned}</span></span>` : ''}
                                     </td>
                                     <td class="px-6 py-5 text-right flex justify-end gap-1">
+                                        ${canEdit ? `<button onclick="editEntry('camps', '${c.id}')" class="p-2 text-blue-400 hover:text-blue-600 transition-colors" title="Edit/Approve Details"><i data-lucide="edit" class="w-4 h-4"></i></button>` : ''}
                                         <button onclick="generateDoc('camp','${c.id}')" class="p-2 text-brand-700 hover:bg-brand-50 rounded-lg"><i data-lucide="file-text" class="w-4 h-4"></i></button>
                                         <button onclick="generateDoc('invoice','${c.id}')" class="p-2 text-emerald-700 hover:bg-emerald-50 rounded-lg"><i data-lucide="credit-card" class="w-4 h-4"></i></button>
-                                        <button onclick="deleteEntry('camps','${c.id}')" class="p-2 text-red-200 hover:text-red-600 transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                        ${canDelete ? `<button onclick="deleteEntry('camps','${c.id}')" class="p-2 text-red-200 hover:text-red-600 transition-colors"><i data-lucide="trash-2" class="w-4 h-4"></i></button>` : ''}
                                     </td>
                                 </tr>
-                            `).join('')}
+                            `}).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -494,7 +566,7 @@
         function renderPhlebos(el, data, s) {
             const filtered = data.phlebos.filter(p => {
                 if (!s) return true;
-                return [p.name, p.contact, p.email, p.city, p.degree, p.upi, p.address, p.aadhar, p.pan].filter(Boolean).join(' ').toLowerCase().includes(s);
+                return [p.name, p.phleboCode, p.contact, p.email, p.city, p.degree, p.upi, p.address, p.aadhar, p.pan].filter(Boolean).join(' ').toLowerCase().includes(s);
             });
             el.innerHTML = `
                 <div class="flex items-center justify-between mb-6">
@@ -505,10 +577,11 @@
                         <thead class="bg-gray-50"><tr><th class="table-header">Identity & Docs</th><th class="table-header">Exp/Degree</th><th class="table-header">Settlement UPI</th><th class="table-header">Full Address</th><th class="table-header text-center">Action</th></tr></thead>
                         <tbody class="divide-y">
                             ${filtered.map(p => `
-                                <tr class="hover:bg-brand-50/10 transition-colors">
+                                <tr class="hover:bg-brand-50/10 transition-colors group/row">
                                     <td class="px-6 py-5">
                                         <p class="font-black text-gray-800 leading-none">${p.name}</p>
-                                        <p class="text-[9px] text-gray-400 font-black uppercase mt-1 mb-1">${p.contact}</p>
+                                        <p class="text-[10px] text-brand-700 font-mono font-black mt-1 mb-1">${p.phleboCode || 'LEGACY-CODE'}</p>
+                                        <p class="text-[9px] text-gray-400 font-black uppercase mb-1">${p.contact}</p>
                                         <div class="flex gap-1 mb-1">
                                             ${p.aadhar ? `<span class="text-[9px] font-mono text-gray-500 border border-gray-200 px-1 rounded bg-gray-50">Aadhar: ${p.aadhar}</span>` : ''}
                                             ${p.pan ? `<span class="text-[9px] font-mono text-gray-500 border border-gray-200 px-1 rounded bg-gray-50">PAN: ${p.pan}</span>` : ''}
@@ -522,7 +595,10 @@
                                         <p class="truncate" title="${p.address}">${p.city}, ${p.state} - ${p.address}</p>
                                         ${p.mapLink ? `<a href="${p.mapLink}" target="_blank" class="text-blue-500 hover:text-blue-700 mt-1 inline-flex items-center gap-1"><i data-lucide="map" class="w-3 h-3"></i> View Map</a>` : ''}
                                     </td>
-                                    <td class="px-6 py-5 text-center"><button onclick="deleteEntry('phlebos','${p.id}')" class="text-red-300 hover:text-red-600 transition-colors"><i data-lucide="trash-2" class="w-4 h-4 mx-auto"></i></button></td>
+                                    <td class="px-6 py-5 text-center flex justify-center gap-2 items-center h-full pt-6">
+                                        <button onclick="editEntry('phlebos','${p.id}')" class="text-blue-400 hover:text-blue-600 transition-all opacity-50 group-hover/row:opacity-100" title="Edit Phlebotomist"><i data-lucide="edit" class="w-4 h-4"></i></button>
+                                        <button onclick="deleteEntry('phlebos','${p.id}')" class="text-red-300 hover:text-red-600 transition-colors opacity-50 group-hover/row:opacity-100"><i data-lucide="trash-2" class="w-4 h-4 mx-auto"></i></button>
+                                    </td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -578,6 +654,63 @@
             `;
         }
 
+        function renderPartnerLabs(el, data, s) {
+            const filtered = data.partner_labs.filter(pl => {
+                if (!s) return true;
+                return [pl.labName, pl.labType, pl.spocName, pl.spocNumber, pl.address].filter(Boolean).join(' ').toLowerCase().includes(s);
+            });
+            el.innerHTML = `
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="font-black text-xl text-brand-900 tracking-tight uppercase">Partner Labs Directory</h3>
+                    <div class="flex gap-3">
+                        <button onclick="showModal('partnerLab')" class="btn-primary shadow-lg"><i data-lucide="plus"></i> Add Partner Lab</button>
+                    </div>
+                </div>
+                <div class="package-card overflow-hidden text-sm">
+                    <table class="w-full text-left">
+                        <thead class="bg-gray-50"><tr><th class="table-header">Lab Details</th><th class="table-header">SPOC & Contact</th><th class="table-header">Address & Timings</th><th class="table-header">Active Tests</th><th class="table-header text-center">Action</th></tr></thead>
+                        <tbody class="divide-y">
+                            ${filtered.map(pl => `
+                                <tr class="hover:bg-brand-50/10 transition-colors">
+                                    <td class="px-6 py-5">
+                                        <p class="font-black text-brand-800 leading-none mb-1">${pl.labName}</p>
+                                        <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-[9px] uppercase font-black border border-blue-200">${pl.labType}</span>
+                                    </td>
+                                    <td class="px-6 py-5">
+                                        <p class="font-bold text-gray-700 uppercase tracking-tight text-xs">${pl.spocName}</p>
+                                        <p class="text-[10px] text-gray-500 uppercase font-bold mt-1">${pl.spocNumber}</p>
+                                    </td>
+                                    <td class="px-6 py-5">
+                                        <p class="text-[9px] text-gray-400 truncate max-w-[180px] mb-1" title="${pl.address || ''}">${pl.address || 'No address provided'}</p>
+                                        <p class="text-[10px] font-bold text-brand-700"><i data-lucide="clock" class="w-3 h-3 inline"></i> ${pl.timings}</p>
+                                    </td>
+                                    <td class="px-6 py-5">
+                                        <button onclick="window.downloadActiveTests('${pl.labName}')" class="btn-sample py-1 px-2 text-[9px]"><i data-lucide="download" class="w-3 h-3"></i> CSV Export</button>
+                                    </td>
+                                    <td class="px-6 py-5 text-center">
+                                        <button onclick="editEntry('partner_labs','${pl.id}')" class="text-blue-400 hover:text-blue-600 transition-all mr-2"><i data-lucide="edit" class="w-4 h-4 inline"></i></button>
+                                        <button onclick="deleteEntry('partner_labs','${pl.id}')" class="text-red-300 hover:text-red-600 transition-all"><i data-lucide="trash-2" class="w-4 h-4 inline"></i></button>
+                                    </td>
+                                </tr>
+                            `).join('') || '<tr><td colspan="5" class="text-center py-6 text-gray-400 text-xs italic">No partner labs found.</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        window.downloadActiveTests = (entityName) => {
+            const tests = window.crmData.tests.filter(t => t.linkedEntity === entityName);
+            if(tests.length === 0) {
+                alert('No active tests mapped to this partner lab.');
+                return;
+            }
+            const h = "testCode,testName,b2bPrice,mrp,sampleType,Tube Required,reportingTat,testNote";
+            const r = tests.map(t => `"${t.testCode || ''}","${t.testName || ''}","${t.b2bPrice || 0}","${t.mrp || 0}","${t.sampleType || ''}","${t.tubes || ''}","${t.reportingTat || ''}","${t.testNote || ''}"`).join('\n');
+            const b = new Blob([h + '\n' + r], { type: 'text/csv' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${entityName}_Active_Tests_${Date.now()}.csv`; a.click();
+        };
+
         function renderPartners(el, data, s) {
             const filtered = data.partners.filter(p => {
                 if (!s) return true;
@@ -615,29 +748,59 @@
             `;
         }
 
-        function renderBookings(el, data, s) {
-            const filtered = data.bookings.filter(b => {
-                if (window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity) {
-                    if (b.entityName !== window.currentSimulatedUser.associatedEntity) return false;
-                }
-                if (!s) return true;
-                
-                // Priority Exact/Partial match for Booking ID
-                if (b.bookingId && b.bookingId.toLowerCase().includes(s)) return true;
-
-                const searchStr = [
-                    b.patientName, b.mobile, b.email, b.date, 
-                    b.partnerLab, b.package, b.bookingType, b.address, b.entityName
-                ].filter(Boolean).join(' ').toLowerCase();
-                return searchStr.includes(s);
-            });
+        window.updateBookingLabList = () => {
+            const partner = document.getElementById('bookingLabPartnerSelect')?.value;
+            const labSelect = document.getElementById('bookingSpecificLabSelect');
+            if(!labSelect) return;
             
+            if (!partner || partner === 'Juvius Internal') {
+                labSelect.innerHTML = '<option value="Juvius Internal Lab">Juvius Internal Lab</option>';
+            } else {
+                const labs = window.crmData.partner_labs.filter(pl => pl.labName === partner);
+                if(labs.length > 0) {
+                    labSelect.innerHTML = '<option value="">Select Lab Location...</option>' + labs.map(pl => `<option value="${pl.address}">${pl.labName} - ${pl.address.substring(0,20)}...</option>`).join('');
+                } else {
+                    labSelect.innerHTML = `<option value="${partner} Main Lab">${partner} Main Lab</option>`;
+                }
+            }
+            
+            window.updateAvailablePackages(partner, 'bookingPackageList');
+        };
+
+        function renderBookings(el, data, s) {
+            const canEdit = window.hasActionRight('Edit Bookings');
+            const canDelete = window.hasActionRight('Delete Bookings');
+            const canApprove = window.hasActionRight('Approve Records');
+            const canDoActions = window.hasActionRight('Booking Actions');
+
+            const f = window.bookingFilters;
+            const activeUser = window.getActiveUser();
+            const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+            const isStrictAdmin = !activeUser || activeUser.role === 'Admin';
+
+            const filtered = data.bookings.filter(b => {
+                if (restrictEntity && b.entityName !== restrictEntity) return false;
+                
+                // Advanced Filters
+                if (f.partner && b.entityName !== f.partner) return false;
+                if (f.collectionDate && b.date !== f.collectionDate) return false;
+                if (f.bookingDate && (!b.createdAt || !b.createdAt.startsWith(f.bookingDate))) return false;
+
+                if (!s) return true;
+                if (b.bookingId && b.bookingId.toLowerCase().includes(s)) return true;
+                return [b.patientName, b.mobile, b.email, b.date, b.labPartner, b.partnerLab, b.package, b.bookingType, b.address, b.city, b.state, b.pincode, b.entityName].filter(Boolean).join(' ').toLowerCase().includes(s);
+            }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            
+            const uniqueEntities = [...new Set(filtered.map(b => b.entityName).filter(Boolean))];
+            const entityOptions = uniqueEntities.map(e => `<option value="${e}" ${f.partner === e ? 'selected' : ''}>${e}</option>`).join('');
+
             el.innerHTML = `
-                <div class="flex flex-col md:flex-row items-center justify-between mb-6 gap-4">
+                <div class="flex flex-col md:flex-row items-center justify-between mb-4 gap-4">
                     <div class="flex flex-wrap gap-3">
                         <button onclick="showModal('booking')" class="btn-primary shadow-lg"><i data-lucide="plus"></i> New Case</button>
                         <button onclick="triggerBulk('bookings')" class="btn-secondary font-bold text-xs uppercase">Bulk Load</button>
                         <button onclick="downloadSampleCSV('bookings')" class="btn-sample"><i data-lucide="download-cloud" class="w-4 h-4"></i> Sample CSV</button>
+                        ${canApprove ? `<button onclick="approveSelected('bookings')" class="btn-primary bg-blue-600 hover:bg-blue-700 shadow-lg text-xs uppercase tracking-widest"><i data-lucide="check-circle" class="w-4 h-4"></i> Approve Selected</button>` : ''}
                     </div>
 
                     <!-- Date Range Export -->
@@ -656,13 +819,75 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Filter Section -->
+                <div class="package-card p-4 mb-6 bg-white flex flex-wrap items-end gap-4 shadow-sm border border-brand-100">
+                    <div class="flex flex-col">
+                        <label class="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-1">Filter by Partner/Client</label>
+                        <select onchange="handleBookingFilterChange('partner', this.value)" class="input-field py-1.5 text-xs font-bold min-w-[180px]">
+                            <option value="">All Entities</option>
+                            ${entityOptions}
+                        </select>
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-1">Collection Date</label>
+                        <input type="date" value="${f.collectionDate}" onchange="handleBookingFilterChange('collectionDate', this.value)" class="input-field py-1.5 text-xs font-bold" />
+                    </div>
+                    <div class="flex flex-col">
+                        <label class="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-1">Booking Date</label>
+                        <input type="date" value="${f.bookingDate}" onchange="handleBookingFilterChange('bookingDate', this.value)" class="input-field py-1.5 text-xs font-bold" />
+                    </div>
+                    ${(f.partner || f.collectionDate || f.bookingDate) ? `<button onclick="clearBookingFilters()" class="text-[10px] font-black text-red-500 hover:text-red-700 underline uppercase tracking-widest mb-2 ml-2">Clear Filters</button>` : ''}
+                </div>
+
                 <div class="package-card overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm">
-                            <thead class="bg-gray-50"><tr><th class="table-header">Booking ID</th><th class="table-header">Patient Demographics</th><th class="table-header">Service & Schedule</th><th class="table-header">Collection Venue</th><th class="table-header text-right">Action</th></tr></thead>
+                            <thead class="bg-gray-50"><tr>
+                                ${canApprove ? `<th class="table-header px-4 w-12 text-center"><input type="checkbox" onchange="toggleSelectAll(this, '.row-checkbox-bookings')" class="w-4 h-4 accent-brand-600 rounded cursor-pointer"></th>` : ''}
+                                <th class="table-header">Booking ID</th><th class="table-header">Patient Demographics</th><th class="table-header">Service & Schedule</th><th class="table-header">Collection Venue</th><th class="table-header text-right">Action</th>
+                            </tr></thead>
                             <tbody class="divide-y divide-gray-100">
-                                ${filtered.map(b => `
+                                ${filtered.map(b => {
+                                    let badgeColor = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+                                    let statusText = 'Pending Approval';
+                                    
+                                    if (b.reportFile) {
+                                        badgeColor = 'bg-gray-800 text-white border-gray-900';
+                                        statusText = 'Report Sent';
+                                    } else if (b.sampleReached) {
+                                        badgeColor = 'bg-purple-50 text-purple-700 border-purple-200';
+                                        statusText = 'Sample at Lab';
+                                    } else if (b.sampleCollected) {
+                                        badgeColor = 'bg-blue-50 text-blue-700 border-blue-200';
+                                        statusText = 'Sample Collected';
+                                    } else if (b.assignedPhlebo) {
+                                        badgeColor = 'bg-brand-50 text-brand-700 border-brand-200';
+                                        statusText = 'Aligned';
+                                    } else if (b.approvalStatus === 'Approved') {
+                                        badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                                        statusText = 'Approved';
+                                    }
+
+                                    const allowEdit = canEdit && (!b.sampleReached || isStrictAdmin);
+
+                                    let nextActionBtn = '';
+                                    if (canDoActions) {
+                                        nextActionBtn = `
+                                            <select onchange="window.handleRowAction(this.value, '${b.id}'); this.selectedIndex=0;" class="text-[9px] font-black uppercase tracking-widest border border-gray-200 px-2 py-1.5 rounded bg-white text-gray-700 hover:bg-gray-50 shadow-sm transition-all outline-none cursor-pointer w-[120px]">
+                                                <option value="" disabled selected>Action ▼</option>
+                                                ${canApprove ? `<option value="Approve">Approve</option>` : ''}
+                                                ${allowEdit ? `<option value="Align">Align Phlebo</option>` : ''}
+                                                <option value="Collected">Mark Collected</option>
+                                                <option value="Reached">Lab Reached</option>
+                                                <option value="Report">Upload Report</option>
+                                            </select>
+                                        `;
+                                    }
+
+                                    return `
                                     <tr class="hover:bg-brand-50/20 transition-colors">
+                                        ${canApprove ? `<td class="px-4 py-5 text-center"><input type="checkbox" value="${b.id}" class="row-checkbox-bookings w-4 h-4 accent-brand-600 rounded cursor-pointer"></td>` : ''}
                                         <td class="px-6 py-5 font-black text-brand-800 font-mono tracking-tighter text-xs">${b.bookingId || 'Legacy'}</td>
                                         <td class="px-6 py-5">
                                             <p class="font-black text-gray-800 text-base mb-1 leading-none uppercase">${b.patientName}</p>
@@ -674,26 +899,33 @@
                                             <p class="text-[9px] text-gray-400 uppercase font-black mt-2 leading-none">${b.date} • ${b.time}</p>
                                             <div class="text-[9px] text-gray-400 uppercase font-black mt-1 leading-none flex items-center gap-1 flex-wrap">
                                                 <span>${b.bookingType} •</span>
-                                                ${b.visitType === 'NSA Home Collection' ? `<span class="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-sm border border-purple-200 text-[8px] tracking-widest shadow-sm">NSA Home Collection</span>` : `<span>${b.visitType || 'N/A'}</span>`}
-                                                <span>• Src: ${b.entityName || 'Direct'} • Lab: ${b.partnerLab || 'Internal'}</span>
+                                                ${b.visitType === 'NSA Home Collection' ? `<span class="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded-sm border border-purple-200 text-[8px] tracking-widest shadow-sm">NSA Home Collection</span>` : 
+                                                  b.visitType === 'Home Collection' ? `<span class="bg-green-100 text-green-800 px-1.5 py-0.5 rounded-sm border border-green-200 text-[8px] tracking-widest shadow-sm">Home Collection</span>` :
+                                                  b.visitType === 'Centre Visit' ? `<span class="bg-pink-100 text-pink-800 px-1.5 py-0.5 rounded-sm border border-pink-200 text-[8px] tracking-widest shadow-sm">Centre Visit</span>` :
+                                                  `<span>${b.visitType || 'N/A'}</span>`}
+                                                <span>• Src: ${b.entityName || 'Direct'} • Lab: ${b.labPartner || 'Internal'} - ${b.partnerLab || 'Main'}</span>
                                             </div>
                                             <div class="mt-2 pt-2 border-t border-gray-100">
-                                                <span class="status-badge ${b.assignedPhlebo ? 'bg-brand-50 text-brand-700 border-brand-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}">${b.assignedPhlebo ? 'Phlebo Assigned' : 'Pending Allocation'}</span>
+                                                <span class="status-badge ${badgeColor}">${statusText}</span>
                                                 ${b.assignedPhlebo ? `<span class="text-[9px] font-bold text-gray-500 uppercase ml-2 tracking-widest">Name: <span class="text-gray-800">${b.assignedPhlebo}</span></span>` : ''}
                                             </div>
                                         </td>
                                         <td class="px-6 py-5 text-[9px] font-black text-gray-400 leading-relaxed max-w-[180px]">
-                                            <p class="truncate" title="${b.address}">${b.address}</p>
+                                            <p class="truncate" title="${b.address}, ${b.city || ''}, ${b.state || ''} - ${b.pincode || ''}">${b.address}</p>
+                                            <p class="text-gray-500 font-bold uppercase tracking-widest mt-0.5 truncate" title="${b.city || ''} ${b.state || ''} ${b.pincode || ''}">${b.city || ''} ${b.pincode ? '- ' + b.pincode : ''}</p>
                                             ${b.mapLink ? `<a href="${b.mapLink}" target="_blank" class="text-blue-500 hover:text-blue-700 mt-1 inline-flex items-center gap-1"><i data-lucide="map" class="w-3 h-3"></i> View Map</a>` : ''}
+                                            <p class="mt-2 text-[10px] font-black text-brand-700">₹${b.amount || 0} <span class="text-gray-400 uppercase tracking-widest text-[8px]">(${b.paymentMode || 'Prepaid'})</span></p>
                                         </td>
                                         <td class="px-6 py-5 text-right">
                                             <div class="flex justify-end items-center gap-3">
+                                                ${nextActionBtn}
+                                                ${allowEdit ? `<button onclick="editEntry('bookings','${b.id}')" class="text-blue-400 hover:text-blue-600 transition-all" title="Edit Details"><i data-lucide="edit" class="w-4 h-4"></i></button>` : ''}
                                                 ${b.reportFile ? `<button onclick="downloadSingleReport('${b.reportFile}', '${b.patientName}')" class="text-brand-600 hover:text-brand-800 transition-all" title="Download Report"><i data-lucide="download" class="w-4 h-4"></i></button>` : ''}
-                                                <button onclick="deleteEntry('bookings','${b.id}')" class="text-red-200 hover:text-red-600 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                                ${canDelete ? `<button onclick="deleteEntry('bookings','${b.id}')" class="text-red-200 hover:text-red-600 transition-all"><i data-lucide="trash-2" class="w-4 h-4 mx-auto"></i></button>` : ''}
                                             </div>
                                         </td>
                                     </tr>
-                                `).join('')}
+                                `}).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -702,10 +934,10 @@
         }
 
         function renderLogistics(el, data, s) {
+            const activeUser = window.getActiveUser();
+            const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
             const filtered = data.logistics.filter(l => {
-                if (window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity) {
-                    if (l.sourceEntity !== window.currentSimulatedUser.associatedEntity) return false;
-                }
+                if (restrictEntity && l.sourceEntity !== restrictEntity) return false;
                 if (!s) return true;
 
                 // Priority Exact/Partial match for Reference ID
@@ -739,7 +971,11 @@
         }
 
         function renderUploadReports(el, data, s) {
+            const activeUser = window.getActiveUser();
+            const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+            
             const filtered = data.bookings.filter(b => {
+                if (restrictEntity && b.entityName !== restrictEntity) return false;
                 if (!b.reportFile) return false;
                 if (!s) return true;
                 
@@ -761,7 +997,7 @@
                     <form onsubmit="window.handleReportUpload(event)" class="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                         <div class="col-span-1 md:col-span-2"><label class="form-label">Select Active Booking Case</label><select name="bookingId" required class="input-field font-black uppercase text-xs tracking-tight">
                             <option value="">Choose booking ID...</option>
-                            ${data.bookings.filter(b => !b.reportFile).map(b => `<option value="${b.id}">${b.bookingId} - ${b.patientName} (${b.date})</option>`).join('')}
+                            ${data.bookings.filter(b => !b.reportFile && (!restrictEntity || b.entityName === restrictEntity)).map(b => `<option value="${b.id}">${b.bookingId} - ${b.patientName} (${b.date})</option>`).join('')}
                         </select></div>
                         <div class="col-span-1"><label class="form-label">Report File (PDF/Image)</label><input type="file" name="reportFile" required class="input-field py-2 bg-white" accept=".pdf,.jpg,.png" /></div>
                         <div class="col-span-1 md:col-span-3 flex justify-end pt-2 border-t border-gray-100">
@@ -842,7 +1078,7 @@
                 </div>
                 <div class="package-card overflow-hidden">
                     <table class="w-full text-left text-sm">
-                        <thead class="bg-gray-50"><tr><th class="table-header">Identity Details</th><th class="table-header">Primary Role</th><th class="table-header">Module Permissions (Access)</th><th class="table-header text-center">Action</th></tr></thead>
+                        <thead class="bg-gray-50"><tr><th class="table-header">Identity Details</th><th class="table-header">Primary Role</th><th class="table-header">Permissions (Access)</th><th class="table-header text-center">Action</th></tr></thead>
                         <tbody class="divide-y divide-gray-100">
                             ${filtered.map(u => `
                                 <tr class="hover:bg-brand-50/20 transition-colors">
@@ -855,11 +1091,14 @@
                                         ${u.associatedEntity ? `<p class="text-[9px] font-bold text-gray-500 mt-2 uppercase tracking-widest flex items-center gap-1"><i data-lucide="link" class="w-3 h-3"></i> ${u.associatedEntity}</p>` : ''}
                                     </td>
                                     <td class="px-6 py-5">
+                                        <div class="flex flex-wrap gap-1.5 max-w-[320px] mb-1.5">
+                                            ${(Array.isArray(u.accessRights) ? u.accessRights : (u.accessRights ? String(u.accessRights).split(',') : [])).map(acc => `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[9px] uppercase font-bold border border-gray-200">${acc}</span>`).join('') || '<span class="text-[10px] italic text-gray-400">No view access granted</span>'}
+                                        </div>
                                         <div class="flex flex-wrap gap-1.5 max-w-[320px]">
-                                            ${(Array.isArray(u.accessRights) ? u.accessRights : (u.accessRights ? String(u.accessRights).split(',') : [])).map(acc => `<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-[9px] uppercase font-bold border border-gray-200">${acc}</span>`).join('') || '<span class="text-[10px] italic text-gray-400">No specific access granted</span>'}
+                                            ${(Array.isArray(u.actionRights) ? u.actionRights : (u.actionRights ? String(u.actionRights).split(',') : [])).map(acc => `<span class="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-[9px] uppercase font-bold border border-blue-200">${acc}</span>`).join('') || ''}
                                         </div>
                                     </td>
-                                    <td class="px-6 py-5 text-center"><button onclick="deleteEntry('users','${u.id}')" class="text-red-200 hover:text-red-600 transition-all"><i data-lucide="trash-2" class="w-4 h-4 mx-auto"></i></button></td>
+                                    <td class="px-6 py-5 text-center"><button onclick="editEntry('users','${u.id}')" class="text-blue-400 hover:text-blue-600 transition-all mr-2" title="Edit Permissions"><i data-lucide="edit" class="w-4 h-4 inline"></i></button><button onclick="deleteEntry('users','${u.id}')" class="text-red-200 hover:text-red-600 transition-all"><i data-lucide="trash-2" class="w-4 h-4 inline"></i></button></td>
                                 </tr>
                             `).join('') || '<tr><td colspan="4" class="px-6 py-10 text-center text-gray-400 text-xs font-bold italic">No user profiles configured.</td></tr>'}
                         </tbody>
@@ -869,31 +1108,69 @@
         }
 
         function renderTests(el, data, s) {
+            const f = window.testMasterFilter;
+            const activeUser = window.getActiveUser();
+            const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+
             const filteredTests = data.tests.filter(t => {
+                const le = t.linkedEntity || 'Global';
+                if (restrictEntity && le !== restrictEntity && le !== 'Global') return false; 
+                if (f && le !== f) return false;
                 if (!s) return true;
-                return [t.testName, t.testCode, t.sampleType, t.city, t.testNote].filter(Boolean).join(' ').toLowerCase().includes(s);
+                return [t.testName, t.testCode, t.sampleType, t.tubes, t.city, t.testNote].filter(Boolean).join(' ').toLowerCase().includes(s);
             });
             const filteredPackages = data.packages.filter(p => {
+                const le = p.linkedEntity || 'Global';
+                if (restrictEntity && le !== restrictEntity && le !== 'Global') return false;
+                if (f && le !== f) return false;
                 if (!s) return true;
                 return [p.name, p.individualTests, p.tubes, p.equipment].filter(Boolean).join(' ').toLowerCase().includes(s);
             });
+
+            const allEntities = restrictEntity ? `
+                <option value="">All Permitted Tests</option>
+                <option value="Global">Global Tests</option>
+                <option value="${restrictEntity}">${restrictEntity} Tests</option>
+            ` : `
+                <option value="">All Tests & Packages</option>
+                <option value="Global">Global (Direct Patients)</option>
+                <optgroup label="Corporate Clients">
+                ${data.clients.map(c => `<option value="${c.name}" ${f === c.name ? 'selected' : ''}>${c.name}</option>`).join('')}
+                </optgroup>
+                <optgroup label="Partners">
+                ${data.partners.map(p => `<option value="${p.name}" ${f === p.name ? 'selected' : ''}>${p.name}</option>`).join('')}
+                </optgroup>
+            `;
             
             el.innerHTML = `
-                <div class="flex items-center justify-between mb-6">
-                    <h3 class="font-black text-xl text-brand-900 tracking-tight uppercase">Master Test Directory</h3>
-                    <div class="flex gap-3">
+                <div class="flex flex-col md:flex-row items-center justify-between mb-6 gap-4">
+                    <div>
+                        <h3 class="font-black text-xl text-brand-900 tracking-tight uppercase">Master Test Directory</h3>
+                        <div class="mt-2 flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-gray-200 shadow-sm inline-flex">
+                            <i data-lucide="filter" class="w-3 h-3 text-brand-600"></i>
+                            <select onchange="window.handleTestMasterFilterChange(this.value)" class="text-[10px] font-black text-brand-800 outline-none cursor-pointer bg-transparent uppercase tracking-widest min-w-[200px]">
+                                ${allEntities}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap gap-3">
                         <button onclick="showModal('test')" class="btn-primary shadow-lg"><i data-lucide="plus"></i> Add Test</button>
                         <button onclick="triggerBulk('tests')" class="btn-secondary font-bold text-xs uppercase">Bulk Load</button>
                         <button onclick="downloadSampleCSV('tests')" class="btn-sample"><i data-lucide="download-cloud" class="w-4 h-4"></i> Sample CSV</button>
+                        <button onclick="deleteSelected('tests')" class="btn-primary bg-red-600 hover:bg-red-700 shadow-lg text-xs uppercase tracking-widest"><i data-lucide="trash-2" class="w-4 h-4"></i> Delete Selected</button>
                     </div>
                 </div>
                 <div class="package-card overflow-hidden mb-10">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm">
-                            <thead class="bg-gray-50"><tr><th class="table-header">Test Code & Name</th><th class="table-header">Pricing (B2B / MRP)</th><th class="table-header">Sample Info</th><th class="table-header">TAT & City</th><th class="table-header">Notes</th><th class="table-header text-right">Actions</th></tr></thead>
+                            <thead class="bg-gray-50"><tr>
+                                <th class="table-header px-4 w-12 text-center"><input type="checkbox" onchange="toggleSelectAll(this, '.row-checkbox-tests')" class="w-4 h-4 accent-brand-600 rounded cursor-pointer"></th>
+                                <th class="table-header">Test Code & Name</th><th class="table-header">Pricing (B2B / MRP)</th><th class="table-header">Access</th><th class="table-header">Sample Info</th><th class="table-header">TAT & City</th><th class="table-header">Notes</th><th class="table-header text-right">Actions</th>
+                            </tr></thead>
                             <tbody class="divide-y divide-gray-100">
                                 ${filteredTests.map(t => `
-                                    <tr class="hover:bg-brand-50/10 transition-colors">
+                                    <tr class="hover:bg-brand-50/10 transition-colors group/row">
+                                        <td class="px-4 py-5 text-center"><input type="checkbox" value="${t.id}" class="row-checkbox-tests w-4 h-4 accent-brand-600 rounded cursor-pointer"></td>
                                         <td class="px-6 py-5">
                                             <p class="font-black text-gray-800 text-sm mb-1 uppercase">${t.testName}</p>
                                             <p class="text-[10px] text-brand-700 font-mono font-black">${t.testCode}</p>
@@ -902,15 +1179,25 @@
                                             <p class="font-black text-gray-800">₹${t.b2bPrice} <span class="text-[9px] text-gray-400">B2B</span></p>
                                             <p class="text-xs font-bold text-gray-400 strike">₹${t.mrp} <span class="text-[9px]">MRP</span></p>
                                         </td>
-                                        <td class="px-6 py-5 text-xs font-bold text-gray-600 uppercase">${t.sampleType}</td>
+                                        <td class="px-6 py-5">
+                                            <span class="bg-brand-50 text-brand-700 px-2 py-0.5 rounded text-[9px] uppercase font-bold border border-brand-100">${t.linkedEntity || 'Global'}</span>
+                                        </td>
+                                        <td class="px-6 py-5 text-xs font-bold text-gray-600 uppercase">
+                                            <p>${t.sampleType || 'N/A'}}</p>
+                                            <p class="text-[9px] text-gray-400 mt-1">Tube: ${t.tubes || 'N/A'}</p>
+                                        </td>
                                         <td class="px-6 py-5">
                                             <p class="text-xs font-bold text-gray-800">${t.reportingTat}</p>
                                             <p class="text-[10px] text-gray-400 font-black uppercase">${t.city}</p>
                                         </td>
                                         <td class="px-6 py-5 text-[10px] text-gray-500 italic max-w-[120px] truncate" title="${t.testNote || ''}">${t.testNote || '-'}</td>
-                                        <td class="px-6 py-5 text-right"><button onclick="deleteEntry('tests','${t.id}')" class="text-red-200 hover:text-red-600 transition-all"><i data-lucide="trash-2" class="w-4 h-4 mx-auto"></i></button></td>
+                                        <td class="px-6 py-5 text-right flex justify-end gap-2 items-center h-full pt-6">
+                                            <button onclick="cloneEntry('tests','${t.id}')" class="text-emerald-400 hover:text-emerald-600 transition-all opacity-50 group-hover/row:opacity-100" title="Clone Test"><i data-lucide="copy" class="w-4 h-4"></i></button>
+                                            <button onclick="editEntry('tests','${t.id}')" class="text-blue-400 hover:text-blue-600 transition-all opacity-50 group-hover/row:opacity-100" title="Edit Test"><i data-lucide="edit" class="w-4 h-4"></i></button>
+                                            <button onclick="deleteEntry('tests','${t.id}')" class="text-red-300 hover:text-red-600 transition-all opacity-50 group-hover/row:opacity-100" title="Delete Test"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                        </td>
                                     </tr>
-                                `).join('') || '<tr><td colspan="6" class="px-6 py-5 text-center text-gray-400 text-xs font-bold italic">No tests found.</td></tr>'}
+                                `).join('') || '<tr><td colspan="8" class="px-6 py-5 text-center text-gray-400 text-xs font-bold italic">No tests found matching the filter.</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -923,8 +1210,13 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                     ${filteredPackages.map(p => `
                         <div class="package-card p-8 group hover:border-brand-700 transition-all relative">
-                            <button onclick="deleteEntry('packages','${p.id}')" class="absolute top-4 right-4 text-red-100 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                            <div class="w-14 h-14 bg-brand-50 rounded-2xl flex items-center justify-center text-brand-800 mb-6 shadow-sm"><i data-lucide="package" class="w-7 h-7"></i></div>
+                            <span class="absolute top-4 left-4 bg-brand-50 text-brand-700 px-2 py-1 rounded-full text-[9px] uppercase font-bold border border-brand-100 shadow-sm">${p.linkedEntity || 'Global'}</span>
+                            <div class="absolute top-4 right-4 flex gap-2 bg-white/80 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all shadow-sm border border-gray-100">
+                                <button onclick="cloneEntry('packages','${p.id}')" class="text-emerald-400 hover:text-emerald-600 transition-all" title="Clone Package"><i data-lucide="copy" class="w-4 h-4"></i></button>
+                                <button onclick="editEntry('packages','${p.id}')" class="text-blue-400 hover:text-blue-600 transition-all" title="Edit Package"><i data-lucide="edit" class="w-4 h-4"></i></button>
+                                <button onclick="deleteEntry('packages','${p.id}')" class="text-red-400 hover:text-red-600 transition-all" title="Delete Package"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                            </div>
+                            <div class="w-14 h-14 bg-brand-50 rounded-2xl flex items-center justify-center text-brand-800 mb-6 mt-4 shadow-sm"><i data-lucide="package" class="w-7 h-7"></i></div>
                             <h4 class="font-black text-2xl text-gray-800 leading-none mb-2 tracking-tight">${p.name}</h4>
                             <div class="my-4">
                                 <span class="text-4xl font-black text-brand-800 tracking-tighter leading-none">₹${p.b2bPrice || p.price || 0}</span> <span class="text-[10px] font-black text-gray-400 uppercase tracking-widest">B2B</span>
@@ -932,7 +1224,7 @@
                             </div>
                             <div class="space-y-4 mt-8 border-t border-gray-50 pt-6 text-[10px] font-black text-gray-400 uppercase tracking-widest leading-relaxed">
                                 <div><p class="mb-1 text-brand-700">Tests Included</p><div class="bg-gray-50 p-3 rounded-xl text-gray-600 font-bold border border-gray-100 leading-tight">${p.individualTests || 'N/A'}</div></div>
-                                <div><p class="mb-1 text-brand-700">Required Vials</p><div class="bg-gray-50 p-3 rounded-xl text-gray-600 font-bold border border-gray-100 leading-tight">${p.tubes}</div></div>
+                                <div><p class="mb-1 text-brand-700">Sample & Vials</p><div class="bg-gray-50 p-3 rounded-xl text-gray-600 font-bold border border-gray-100 leading-tight">${p.sampleType ? p.sampleType + ' | ' : ''}${p.tubes || 'N/A'}</div></div>
                                 <div><p class="mb-1 text-brand-700">Gear checklist</p><div class="bg-gray-50 p-3 rounded-xl text-gray-600 font-bold border border-gray-100 leading-tight">${p.equipment}</div></div>
                             </div>
                         </div>
@@ -941,12 +1233,73 @@
             `;
         }
 
+        window.updateAvailablePackages = (entityName, selectId) => {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+
+            const isDirectPatient = !entityName || entityName === 'N/A' || entityName === 'Juvius Healthcare' || entityName === 'Juvius Internal';
+            let allowedTests = [];
+            let allowedPackages = [];
+
+            if (isDirectPatient) {
+                // Direct Patient: Only show Global tests/packages
+                allowedTests = window.crmData.tests.filter(t => !t.linkedEntity || t.linkedEntity === 'Global');
+                allowedPackages = window.crmData.packages.filter(p => !p.linkedEntity || p.linkedEntity === 'Global');
+            } else {
+                // Partner/Client: Only show tests/packages strictly linked to them
+                allowedTests = window.crmData.tests.filter(t => t.linkedEntity === entityName);
+                allowedPackages = window.crmData.packages.filter(p => p.linkedEntity === entityName);
+            }
+
+            let html = '<option value="">Select Package or Test...</option>';
+            if (allowedPackages.length > 0) {
+                html += '<optgroup label="Packages">' + allowedPackages.map(p => {
+                    const b2b = p.b2bPrice || p.price || 0;
+                    const mrp = p.mrp || 0;
+                    return `<option value="${p.name}">${p.name} (B2B: ₹${b2b} | MRP: ₹${mrp})</option>`;
+                }).join('') + '</optgroup>';
+            }
+            if (allowedTests.length > 0) {
+                html += '<optgroup label="Individual Tests">' + allowedTests.map(t => {
+                    const b2b = t.b2bPrice || 0;
+                    const mrp = t.mrp || 0;
+                    return `<option value="${t.testName}">${t.testName} (B2B: ₹${b2b} | MRP: ₹${mrp})</option>`;
+                }).join('') + '</optgroup>';
+            }
+            select.innerHTML = html;
+        };
+
         // --- Modals & Shared Logic ---
+
+        window.handleLabTestCSV = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const r = new FileReader();
+            r.onload = ev => {
+                const lines = ev.target.result.split('\n').filter(l => l.trim());
+                if (lines.length < 2) { alert('Invalid or empty CSV'); return; }
+                const headers = lines[0].split(',').map(h => h.trim());
+                const data = lines.slice(1).map(line => {
+                    const values = line.split(',').map(v => v.trim());
+                    return headers.reduce((obj, header, i) => { obj[header] = values[i] || ''; return obj; }, {});
+                });
+                
+                window.pendingLabTests = data;
+                alert(`${data.length} tests loaded and ready to activate upon saving.`);
+            };
+            r.readAsText(file);
+        };
 
         window.showModal = (type) => {
             const modal = document.getElementById('modal-container');
             const content = document.getElementById('modal-content');
             modal.classList.remove('hidden');
+            window.currentBookingTestsList = []; // Reset selected booking tests
+            window.currentCampTestsList = []; // Reset selected camp tests
+            window.pendingLabTests = []; // Reset parsed lab tests
+
+            const activeUser = window.getActiveUser();
+            const isRestricted = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
 
             let html = "";
             if (type === 'client') {
@@ -985,7 +1338,6 @@
                     </form>
                 `;
             } else if (type === 'camp') {
-                const isRestricted = window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity;
                 html = `
                     <h2 class="text-2xl font-black mb-6 text-brand-900 uppercase tracking-tighter">Medical Camp Setup</h2>
                     <form id="camp-form" class="grid grid-cols-3 gap-4 text-xs">
@@ -997,15 +1349,19 @@
                         <div class="col-span-3"><label class="form-label">Venue Address</label><textarea name="address" required class="input-field h-16 font-medium"></textarea></div>
                         <div class="col-span-3"><label class="form-label">Venue Google Maps Link</label><input name="mapLink" type="url" class="input-field font-medium text-blue-600" placeholder="https://maps.app.goo.gl/..." /></div>
                         
-                        <div><label class="form-label">Medical Case Definition</label><select name="packageName" required class="input-field font-bold">
-                            <option value="">Select Package or Test...</option>
-                            <optgroup label="Packages">
-                                ${window.crmData.packages.map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
-                            </optgroup>
-                            <optgroup label="Individual Tests">
-                                ${window.crmData.tests.map(t => `<option value="${t.testName}">${t.testName}</option>`).join('')}
-                            </optgroup>
-                        </select></div>
+                        <div class="col-span-3">
+                            <label class="form-label">Medical Case Definition (Search & Add Packages/Tests)</label>
+                            <div class="flex gap-2">
+                                <input list="campPackageList" id="campPackageSelect" class="input-field font-black uppercase text-[11px] tracking-tight flex-1" placeholder="Type to search test..." autocomplete="off">
+                                <button type="button" onclick="window.addTestToCamp()" class="btn-secondary py-1 px-4 text-xs bg-brand-50 text-brand-700 border-brand-200 hover:bg-brand-100 flex items-center gap-1"><i data-lucide="plus" class="w-3 h-3"></i> Add</button>
+                            </div>
+                            <datalist id="campPackageList"></datalist>
+                            <div id="campSelectedTests" class="flex flex-wrap gap-2 mt-2"></div>
+                            <input type="hidden" name="packageName" id="hiddenCampPackage" required>
+                        </div>
+                        <div class="col-span-1"><label class="form-label">Sample Type</label><input name="sampleType" id="campSampleType" readonly class="input-field font-bold bg-gray-100 text-gray-500" placeholder="Auto-fetched" /></div>
+                        <div class="col-span-2"><label class="form-label">Tube / Container</label><input name="tubes" id="campTubes" readonly class="input-field font-bold bg-gray-100 text-gray-500" placeholder="Auto-fetched" /></div>
+                        
                         <div><label class="form-label">Sample Count Target</label><input name="totalCounts" required type="number" class="input-field font-black" /></div>
                         <div><label class="form-label">Total Staff Aligned</label><input name="staffAligned" type="number" class="input-field font-bold" placeholder="e.g. 2" ${isRestricted ? 'disabled title="Only Juvius Admin can dictate"' : ''} /></div>
                         <div><label class="form-label">Operating Timings</label><input name="campTime" required placeholder="9AM-4PM" class="input-field font-bold" /></div>
@@ -1015,6 +1371,14 @@
                         <div><label class="form-label">Hard Copy Req.</label><select name="hardCopyRequired" class="input-field font-bold"><option value="No">No</option><option value="Yes">Yes</option></select></div>
                         <div><label class="form-label">Site SPOC Name</label><input name="spocName" required class="input-field font-bold" /></div>
                         <div><label class="form-label">Site SPOC Phone</label><input name="spocDetails" required class="input-field font-bold" /></div>
+                        
+                        <div class="col-span-3 border-t border-gray-100 mt-2 pt-4 ${!window.checkIsAdmin() ? 'hidden' : ''}">
+                            <h4 class="text-[10px] font-black text-brand-600 uppercase tracking-widest mb-2">Admin Controls</h4>
+                            <div class="grid grid-cols-3 gap-4">
+                                <div><label class="form-label">Approval Status</label><select name="approvalStatus" class="input-field font-bold"><option value="Pending Approval">Pending Approval</option><option value="Approved">Approved</option></select></div>
+                            </div>
+                        </div>
+
                         <div class="col-span-3 flex gap-3 mt-4"><button type="button" onclick="closeModal()" class="flex-1 btn-secondary uppercase font-black text-xs">Discard</button><button type="submit" class="btn-primary flex-2 uppercase font-black tracking-widest shadow-xl">Activate Camp Pipeline</button></div>
                     </form>
                 `;
@@ -1154,12 +1518,45 @@
                         <div class="col-span-2 flex gap-3 mt-4"><button type="button" onclick="closeModal()" class="flex-1 btn-secondary uppercase font-black text-xs">Cancel</button><button type="submit" class="btn-primary flex-2 uppercase font-black tracking-widest text-xs shadow-xl">Activate Partner</button></div>
                     </form>
                 `;
+            } else if (type === 'partnerLab') {
+                html = `
+                    <h2 class="text-2xl font-black mb-6 text-brand-900 uppercase tracking-tight">Partner Lab Registration</h2>
+                    <form id="partnerLab-form" class="grid grid-cols-2 gap-4 text-xs">
+                        <div class="col-span-2"><label class="form-label">Select Partner Lab Node</label>
+                            <select name="labName" required class="input-field font-black uppercase tracking-tight">
+                                <option value="">Select Connected Partner...</option>
+                                ${window.crmData.partners.filter(p => p.category.includes('Pathology') || p.category.includes('Radiology')).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div class="col-span-2"><label class="form-label">Lab Type</label><select name="labType" class="input-field font-bold">
+                            <option value="Pathology">Pathology</option>
+                            <option value="Radiology">Radiology</option>
+                            <option value="Pathology & Radiology">Pathology & Radiology</option>
+                        </select></div>
+                        <div><label class="form-label">SPOC Name</label><input name="spocName" required class="input-field font-bold" /></div>
+                        <div><label class="form-label">SPOC Number</label><input name="spocNumber" required class="input-field font-bold" /></div>
+                        <div class="col-span-2"><label class="form-label">Lab Address</label><textarea name="address" required class="input-field h-16 font-medium"></textarea></div>
+                        <div class="col-span-2"><label class="form-label">Operating Timings</label><input name="timings" required class="input-field font-bold" placeholder="e.g., 08:00 AM - 08:00 PM" /></div>
+                        
+                        <div class="col-span-2 border-t border-gray-100 my-2 pt-4">
+                            <div class="flex justify-between items-end mb-2">
+                                <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest">Bulk Upload Lab Tests (CSV)</h4>
+                                <button type="button" onclick="window.downloadSampleCSV('lab_tests')" class="text-[9px] font-bold text-brand-600 hover:text-brand-800 underline"><i data-lucide="download" class="w-3 h-3 inline"></i> Download Sample CSV</button>
+                            </div>
+                            <input type="file" id="labTestCSV" accept=".csv" class="input-field py-2 bg-gray-50" onchange="window.handleLabTestCSV(event)" />
+                            <p class="text-[9px] text-gray-500 mt-1 italic">Uploading a CSV will activate these tests specifically for this lab partner automatically upon save.</p>
+                        </div>
+
+                        <div class="col-span-2 flex gap-3 mt-4"><button type="button" onclick="closeModal()" class="flex-1 btn-secondary uppercase font-black text-xs">Discard</button><button type="submit" class="btn-primary flex-2 uppercase font-black tracking-widest text-xs shadow-xl">Save Partner Lab</button></div>
+                    </form>
+                `;
             } else if (type === 'booking') {
                 const isRestricted = window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity;
                 html = `
                     <h2 class="text-2xl font-black mb-6 text-brand-900 uppercase tracking-tight">New Patient Record</h2>
                     <form id="booking-form" class="grid grid-cols-2 gap-4 text-xs">
-                        <div><label class="form-label">Full Patient Name</label><input name="patientName" required class="input-field font-black uppercase tracking-tight" /></div>
+                        <div class="col-span-2"><label class="form-label">Full Patient Name</label><input name="patientName" required class="input-field font-black uppercase tracking-tight" /></div>
+                        <div><label class="form-label">Mobile Number</label><input name="mobile" required type="tel" class="input-field font-bold" placeholder="10-digit mobile" /></div>
                         <div><label class="form-label">Email Address</label><input name="email" required type="email" class="input-field font-bold" placeholder="patient@example.com" /></div>
                         <div class="grid grid-cols-2 gap-2">
                             <div><label class="form-label">Age</label><input name="age" required type="number" class="input-field font-bold" /></div>
@@ -1180,34 +1577,99 @@
                             <option value="Hospitals">Hospitals</option>
                         </select></div>
                         <div class="col-span-2"><label class="form-label">Associated Partner/Client</label><select name="entityName" id="entityNameSelect" class="input-field font-bold uppercase text-[11px] tracking-tight">
-                            <option value="N/A">N/A (Direct Patient)</option>
+                            <option value="Juvius Healthcare">Juvius Healthcare Internal</option>
                         </select></div>
 
-                        <div class="col-span-2"><label class="form-label">Medical Case Definition (Package / Test)</label><select name="package" required class="input-field font-black uppercase text-[11px] tracking-tight">
-                            <option value="">Select Package or Test From Price List...</option>
-                            <optgroup label="Packages">
-                                ${window.crmData.packages.map(p => {
-                                    const b2b = p.b2bPrice || p.price || 0;
-                                    const mrp = p.mrp || 0;
-                                    return `<option value="${p.name}">${p.name} (B2B: ₹${b2b} | MRP: ₹${mrp})</option>`;
-                                }).join('')}
-                            </optgroup>
-                            <optgroup label="Individual Tests">
-                                ${window.crmData.tests.map(t => {
-                                    const b2b = t.b2bPrice || 0;
-                                    const mrp = t.mrp || 0;
-                                    return `<option value="${t.testName}">${t.testName} (B2B: ₹${b2b} | MRP: ₹${mrp})</option>`;
-                                }).join('')}
-                            </optgroup>
-                        </select></div>
                         <div><label class="form-label">Assign Phlebotomist (Admin Allocation)</label><select name="assignedPhlebo" class="input-field font-bold uppercase text-[11px] tracking-tight" ${isRestricted ? 'disabled title="Only Juvius Admin can assign"' : ''}><option value="">Unassigned (Pending)</option>${window.crmData.phlebos.map(p => `<option value="${p.name}">${p.name} (${p.city})</option>`).join('')}</select></div>
-                        <div><label class="form-label">Assigned Laboratory</label><select name="partnerLab" required class="input-field font-bold uppercase text-[11px] tracking-tight">${window.crmData.partners.filter(p => p.category.includes('Pathology')).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}</select></div>
+                        
+                        <div><label class="form-label">Assigned Lab Partner</label><select name="labPartner" id="bookingLabPartnerSelect" onchange="window.updateBookingLabList()" required class="input-field font-bold uppercase text-[11px] tracking-tight">
+                            <option value="">Select Lab Partner...</option>
+                            <option value="Juvius Internal">Juvius Internal</option>
+                            ${window.crmData.partners.filter(p => p.category.includes('Pathology') || p.category.includes('Radiology')).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
+                        </select></div>
+                        <div class="col-span-2"><label class="form-label">Assigned Laboratory (Location)</label><select name="partnerLab" id="bookingSpecificLabSelect" required class="input-field font-bold uppercase text-[11px] tracking-tight">
+                            <option value="">Select Lab Location...</option>
+                        </select></div>
+                        
+                        <div class="col-span-2">
+                            <label class="form-label">Medical Case Definition (Search & Add Packages/Tests)</label>
+                            <div class="flex gap-2">
+                                <input list="bookingPackageList" id="bookingPackageSelect" class="input-field font-black uppercase text-[11px] tracking-tight flex-1" placeholder="Type to search test..." autocomplete="off">
+                                <button type="button" onclick="window.addTestToBooking()" class="btn-secondary py-1 px-4 text-xs bg-brand-50 text-brand-700 border-brand-200 hover:bg-brand-100 flex items-center gap-1"><i data-lucide="plus" class="w-3 h-3"></i> Add</button>
+                            </div>
+                            <datalist id="bookingPackageList"></datalist>
+                            <div id="bookingSelectedTests" class="flex flex-wrap gap-2 mt-2"></div>
+                            <input type="hidden" name="package" id="hiddenBookingPackage" required>
+                        </div>
+                        <div><label class="form-label">Sample Type</label><input name="sampleType" id="bookingSampleType" readonly class="input-field font-bold bg-gray-100 text-gray-500" placeholder="Auto-fetched" /></div>
+                        <div><label class="form-label">Tube / Container</label><input name="tubes" id="bookingTubes" readonly class="input-field font-bold bg-gray-100 text-gray-500" placeholder="Auto-fetched" /></div>
+                        
                         <div><label class="form-label">Visit / Booking Type</label><select name="visitType" id="visitTypeSelect" class="input-field font-bold"><option value="Home Collection">Home Collection</option><option value="NSA Home Collection">NSA Home Collection</option><option value="Camp">Camp</option><option value="Drop off">Drop off</option></select></div>
                         <div><label class="form-label">Collection Date</label><input name="date" type="date" required class="input-field font-bold" /></div>
+                        
                         <div><label class="form-label">Appointment time</label><input name="time" type="time" required class="input-field font-bold" /></div>
+                        <div class="col-span-2 grid grid-cols-3 gap-4">
+                            <div><label class="form-label">City</label><input name="city" required class="input-field font-bold" /></div>
+                            <div><label class="form-label">State</label><input name="state" required class="input-field font-bold" /></div>
+                            <div><label class="form-label">Pincode</label><input name="pincode" required class="input-field font-bold" /></div>
+                        </div>
                         <div class="col-span-2"><label class="form-label">Collection Venue Address</label><textarea name="address" required class="input-field h-16 font-medium" placeholder="Patient's address for home collection"></textarea></div>
                         <div class="col-span-2"><label class="form-label">Venue Google Maps Link</label><input name="mapLink" type="url" class="input-field font-medium text-blue-600" placeholder="https://maps.app.goo.gl/..." /></div>
-                        <div class="col-span-2"><label class="form-label">Booking Fee (INR)</label><input name="amount" required type="number" class="input-field font-black text-xl text-brand-800" /></div>
+                        
+                        <div class="col-span-2 border-t border-gray-100 mt-2 pt-4">
+                            <h4 class="text-[10px] font-black text-brand-600 uppercase tracking-widest mb-3 flex items-center gap-1">
+                                <i data-lucide="credit-card" class="w-3 h-3"></i> Payment & Billing Details
+                            </h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 p-4 rounded-xl border border-gray-200">
+                                <div class="col-span-2 md:col-span-1">
+                                    <label class="form-label">Payment Mode</label>
+                                    <select name="paymentMode" class="input-field font-bold">
+                                        <option value="Prepaid">Prepaid</option>
+                                        <option value="Postpaid">Postpaid</option>
+                                    </select>
+                                </div>
+                                <div class="col-span-2 md:col-span-1">
+                                    <label class="form-label">Base Fee (₹)</label>
+                                    <input name="baseAmount" id="calcBase" type="number" min="0" required class="input-field font-bold" oninput="window.calculateFinalAmount()" placeholder="0" />
+                                </div>
+                                <div class="col-span-2 md:col-span-2 grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label class="form-label">Discount Type</label>
+                                        <select name="discountType" id="calcDiscType" class="input-field font-bold" onchange="window.calculateFinalAmount()">
+                                            <option value="None">None</option>
+                                            <option value="Percentage">Percentage (%)</option>
+                                            <option value="Flat">Flat Amount (₹)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label class="form-label">Discount Value</label>
+                                        <input name="discountValue" id="calcDiscVal" type="number" min="0" class="input-field font-bold" oninput="window.calculateFinalAmount()" placeholder="0" />
+                                    </div>
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="form-label">Additional Charges (₹)</label>
+                                    <input name="additionalCharges" id="calcAddCharges" type="number" min="0" class="input-field font-bold" oninput="window.calculateFinalAmount()" placeholder="0" />
+                                </div>
+                                <div class="col-span-2">
+                                    <label class="form-label">Charges Remarks</label>
+                                    <input name="additionalRemarks" type="text" class="input-field font-medium" placeholder="e.g., Home Collection Distance Fee" />
+                                </div>
+                                <div class="col-span-2 md:col-span-4 mt-2 pt-3 border-t border-gray-200 flex justify-between items-center">
+                                    <span class="text-xs font-black text-gray-500 uppercase tracking-widest">Net Payable Total</span>
+                                    <div class="flex items-center gap-1 text-2xl font-black text-brand-800">
+                                        ₹ <input name="amount" id="calcFinal" readonly class="bg-transparent border-none text-right outline-none w-24 pointer-events-none" value="0" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="col-span-2 border-t border-gray-100 mt-2 pt-4 ${!window.checkIsAdmin() ? 'hidden' : ''}">
+                            <h4 class="text-[10px] font-black text-brand-600 uppercase tracking-widest mb-2">Admin Controls</h4>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div><label class="form-label">Approval Status</label><select name="approvalStatus" class="input-field font-bold"><option value="Pending Approval">Pending Approval</option><option value="Approved">Approved</option></select></div>
+                            </div>
+                        </div>
+
                         <div class="col-span-2 flex gap-3 mt-4"><button type="button" onclick="closeModal()" class="flex-1 btn-secondary uppercase font-black text-xs">Discard</button><button type="submit" class="btn-primary flex-2 uppercase font-black text-xs shadow-xl active:scale-95">Activate Patient case</button></div>
                     </form>
                 `;
@@ -1226,6 +1688,7 @@
                         <div class="grid grid-cols-2 gap-4">
                             <div><label class="form-label">Target Lab</label><select name="targetLab" required class="input-field font-bold text-[11px]">
                                 <option value="">Select Lab...</option>
+                                ${window.crmData.partner_labs.map(pl => `<option value="${pl.labName}">${pl.labName}</option>`).join('')}
                                 ${window.crmData.partners.filter(p => p.category.includes('Pathology')).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
                                 <option value="Other">Other / Manual</option>
                             </select></div>
@@ -1269,6 +1732,18 @@
                             </div>
                         </div>
 
+                        <div class="col-span-2 border-t border-gray-100 my-2 pt-4">
+                            <h4 class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Sub-Access / Action Permissions</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                                ${['Edit Bookings', 'Delete Bookings', 'Booking Actions', 'Edit Camps', 'Delete Camps', 'Approve Records'].map(a => `
+                                    <label class="flex items-center gap-2 p-2.5 bg-gray-50 rounded-lg border border-gray-200 cursor-pointer hover:border-brand-300 transition-colors shadow-sm">
+                                        <input type="checkbox" name="actionRights" value="${a}" class="accent-brand-600 w-4 h-4 rounded">
+                                        <span class="text-[10px] font-black text-gray-700 uppercase tracking-tight">${a}</span>
+                                    </label>
+                                `).join('')}
+                            </div>
+                        </div>
+
                         <div class="col-span-2 flex gap-3 mt-6">
                             <button type="button" onclick="closeModal()" class="flex-1 btn-secondary uppercase font-black text-xs">Discard</button>
                             <button type="submit" class="btn-primary flex-2 uppercase font-black text-xs shadow-xl active:scale-95">Create User Profile</button>
@@ -1284,12 +1759,28 @@
                         <div><label class="form-label">B2B Price (₹)</label><input name="b2bPrice" type="number" required class="input-field font-bold" /></div>
                         <div><label class="form-label">MRP (₹)</label><input name="mrp" type="number" required class="input-field font-bold" /></div>
                         <div><label class="form-label">Sample Type</label><input name="sampleType" required class="input-field font-bold" placeholder="e.g., Serum, EDTA Blood" /></div>
+                        <div><label class="form-label">Tube / Container Required</label><input name="tubes" required class="input-field font-bold" placeholder="e.g., SST, EDTA Tube" /></div>
                         <div><label class="form-label">Reporting TAT</label><input name="reportingTat" required class="input-field font-bold" placeholder="e.g., 12 Hours, 2 Days" /></div>
-                        <div class="col-span-2"><label class="form-label">City Coverage</label><input name="city" required class="input-field font-bold" placeholder="e.g., PAN India, Mumbai, Delhi" /></div>
-                        <div class="col-span-2"><label class="form-label">Test Note / Instructions</label><input name="testNote" class="input-field font-medium" placeholder="e.g., Fasting required for 10-12 hours" /></div>
+                        <div><label class="form-label">City Coverage</label><input name="city" required class="input-field font-bold" placeholder="e.g., PAN India, Mumbai, Delhi" /></div>
+                        <div class="col-span-2"><label class="form-label">Test Note / Instructions</label><input name="testNote" required class="input-field font-medium" placeholder="e.g., Fasting required for 10-12 hours" /></div>
+                        
+                        <div class="col-span-2 border-t border-gray-100 my-2 pt-4">
+                            <label class="form-label">Linked Client/Partner (Access Control)</label>
+                            <select name="linkedEntity" class="input-field font-bold border-brand-300 shadow-sm focus:ring-brand-500">
+                                <option value="Global">Global (All Entities)</option>
+                                <optgroup label="Corporate Clients">
+                                    ${window.crmData.clients.map(c => `<option value="${c.name}">${c.name}</option>`).join('')}
+                                </optgroup>
+                                <optgroup label="Partners">
+                                    ${window.crmData.partners.map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
+                                </optgroup>
+                            </select>
+                            <p class="text-[9px] text-gray-500 mt-1 italic">Note: Linking a specific partner will override the Global pricing for them automatically.</p>
+                        </div>
+
                         <div class="col-span-2 flex gap-3 mt-4">
                             <button type="button" onclick="closeModal()" class="flex-1 btn-secondary uppercase font-black text-xs">Discard</button>
-                            <button type="submit" class="btn-primary flex-2 uppercase font-black text-xs shadow-xl">Add Test to Master</button>
+                            <button type="submit" class="btn-primary flex-2 uppercase font-black text-xs shadow-xl">Save Test Configuration</button>
                         </div>
                     </form>
                 `;
@@ -1303,10 +1794,10 @@
                             <div class="h-40 overflow-y-auto border border-brand-100 rounded-lg bg-gray-50 p-3 space-y-2 custom-scrollbar">
                                 ${window.crmData.tests && window.crmData.tests.length > 0 ? window.crmData.tests.map(t => `
                                     <label class="flex items-start gap-3 p-2 bg-white rounded border border-brand-100 shadow-sm cursor-pointer hover:border-brand-300 transition-colors">
-                                        <input type="checkbox" name="selectedTests" value="${t.testName} (${t.testCode})" data-b2b="${t.b2bPrice || 0}" data-mrp="${t.mrp || 0}" onchange="calculatePackagePrice()" class="mt-1 accent-brand-600 w-4 h-4 rounded shrink-0">
+                                        <input type="checkbox" name="selectedTests" value="${t.testName} (${t.testCode})" data-b2b="${t.b2bPrice || 0}" data-mrp="${t.mrp || 0}" data-tubes="${t.tubes || ''}" data-sample="${t.sampleType || ''}" onchange="window.calculatePackagePrice()" class="mt-1 accent-brand-600 w-4 h-4 rounded shrink-0">
                                         <div class="flex flex-col">
                                             <span class="text-xs font-black text-gray-800 uppercase">${t.testName}</span>
-                                            <span class="text-[9px] font-bold text-gray-400">${t.testCode} | B2B: ₹${t.b2bPrice} | MRP: ₹${t.mrp} | TAT: ${t.reportingTat}</span>
+                                            <span class="text-[9px] font-bold text-gray-400">${t.testCode} | B2B: ₹${t.b2bPrice} | MRP: ₹${t.mrp} | TAT: ${t.reportingTat} | Tube: ${t.tubes || 'N/A'}</span>
                                         </div>
                                     </label>
                                 `).join('') : '<p class="text-xs text-gray-400 p-2 font-bold italic">No tests found. Please add tests in Test Master first.</p>'}
@@ -1316,15 +1807,36 @@
                             <div><label class="form-label">Package B2B Price (₹)</label><input name="b2bPrice" id="pkgB2B" required type="number" class="input-field font-black text-lg text-brand-800" placeholder="0" /></div>
                             <div><label class="form-label">Package MRP (₹)</label><input name="mrp" id="pkgMRP" required type="number" class="input-field font-black text-lg text-gray-600" placeholder="0" /></div>
                         </div>
-                        <div class="col-span-2"><label class="form-label">Required Vials</label><input name="tubes" required placeholder="EDTA, SST etc" class="input-field font-bold" /></div>
+                        <div class="col-span-2 grid grid-cols-2 gap-4 mt-2">
+                            <div><label class="form-label">Sample Type (Auto-fetched)</label><input name="sampleType" id="pkgSampleType" readonly class="input-field font-bold bg-gray-100 text-gray-500" placeholder="Auto-populated" /></div>
+                            <div><label class="form-label">Required Vials (Auto-fetched/Editable)</label><input name="tubes" id="pkgTubes" required placeholder="EDTA, SST etc" class="input-field font-bold" /></div>
+                        </div>
                         <div class="col-span-2"><label class="form-label">Medical Gear checklist</label><textarea name="equipment" required class="input-field h-16 font-medium" placeholder="Checklist for workforce"></textarea></div>
+                        
+                        <div class="col-span-2 border-t border-gray-100 my-2 pt-4">
+                            <label class="form-label">Linked Client/Partner (Access Control)</label>
+                            <select name="linkedEntity" class="input-field font-bold border-brand-300 shadow-sm focus:ring-brand-500">
+                                <option value="Global">Global (All Entities)</option>
+                                <optgroup label="Corporate Clients">
+                                    ${window.crmData.clients.map(c => `<option value="${c.name}">${c.name}</option>`).join('')}
+                                </optgroup>
+                                <optgroup label="Partners">
+                                    ${window.crmData.partners.map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
+                                </optgroup>
+                            </select>
+                            <p class="text-[9px] text-gray-500 mt-1 italic">Note: Linking a specific partner will override the Global package for them automatically.</p>
+                        </div>
+
                         <div class="col-span-2 flex gap-3 pt-4"><button type="button" onclick="closeModal()" class="flex-1 btn-secondary font-black uppercase text-xs tracking-widest">Discard</button><button type="submit" class="btn-primary flex-2 uppercase font-black text-xs tracking-widest shadow-lg">Save Definition</button></div>
                     </form>
                 `;
             }
 
             content.innerHTML = html;
-            if (type === 'booking') window.updateEntityList();
+            if (type === 'booking') {
+                window.updateEntityList();
+                window.updateBookingLabList();
+            }
             if (type === 'camp') window.updateCampClientList();
             if (type === 'logistics') window.updateLogisticsEntityList();
             
@@ -1342,15 +1854,18 @@
                         const fd = new FormData(form);
                         const payload = Object.fromEntries(fd.entries());
                         
-                        // Extract file names to save them as strings instead of crashing Firestore with File objects
                         for (const key in payload) {
                             if (payload[key] instanceof File) {
                                 payload[key] = payload[key].name || "";
                             }
                         }
                         
+                        const editId = payload.id;
+                        delete payload.id; // Prevent saving internal object id
+
                         if (type === 'user') {
                             payload.accessRights = fd.getAll('accessRights');
+                            payload.actionRights = fd.getAll('actionRights');
                             if (payload.role === 'Executive' || payload.role === 'Logistics') {
                                 payload.associatedEntity = null;
                             }
@@ -1362,14 +1877,85 @@
                             delete payload.selectedTests;
                         }
 
-                        if (type === 'camp') payload.campCode = generateCampID();
-                        if (type === 'booking') payload.bookingId = generateBookingID();
+                        // Approval Defaults
+                        if (!window.checkIsAdmin()) {
+                            payload.approvalStatus = 'Pending Approval';
+                        } else if (!payload.approvalStatus) {
+                            payload.approvalStatus = 'Approved';
+                        }
+
+                        const colName = type === 'phlebo' ? 'phlebos' : (type === 'package' ? 'packages' : (type === 'partnerLab' ? 'partner_labs' : (type === 'test' ? 'tests' : `${type}s`)));
                         
-                        payload.createdAt = new Date().toISOString();
-                        const colName = type === 'phlebo' ? 'phlebos' : (type === 'package' ? 'packages' : (type === 'test' ? 'tests' : `${type}s`));
-                        
-                        await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', colName), payload);
-                        closeModal(); // This successfully auto-hides the popup
+                        if (editId) {
+                            // Update Existing Entry
+                            payload.updatedAt = new Date().toISOString();
+                            await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', colName, editId), payload);
+                        } else {
+                            // Create New Entry
+                            payload.createdAt = new Date().toISOString();
+                            if (type === 'phlebo') {
+                                payload.phleboCode = generatePhleboID(payload.name);
+                            }
+
+                            if (type === 'camp' || type === 'booking') {
+                                const counterRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'counters', 'idTracker');
+                                await runTransaction(db, async (transaction) => {
+                                    const counterDoc = await transaction.get(counterRef);
+                                    let newCount = 1;
+                                    let updateData = {};
+                                    
+                                    if (!counterDoc.exists()) {
+                                        const baseCampCount = window.crmData.camps.length;
+                                        const baseBookingCount = window.crmData.bookings.length;
+                                        newCount = (type === 'camp' ? baseCampCount : baseBookingCount) + 1;
+                                        updateData = { 
+                                            campCount: baseCampCount, 
+                                            bookingCount: baseBookingCount 
+                                        };
+                                        updateData[type === 'camp' ? 'campCount' : 'bookingCount'] = newCount;
+                                        transaction.set(counterRef, updateData);
+                                    } else {
+                                        const data = counterDoc.data();
+                                        const field = type === 'camp' ? 'campCount' : 'bookingCount';
+                                        const fallbackLength = type === 'camp' ? window.crmData.camps.length : window.crmData.bookings.length;
+                                        newCount = (data[field] || fallbackLength) + 1;
+                                        updateData[field] = newCount;
+                                        transaction.update(counterRef, updateData);
+                                    }
+
+                                    if (type === 'camp') payload.campCode = `CAMP${String(newCount).padStart(4, '0')}`;
+                                    if (type === 'booking') payload.bookingId = String(90325 + newCount).padStart(6, '0');
+
+                                    const newDocRef = doc(collection(db, 'artifacts', APP_ID, 'public', 'data', colName));
+                                    transaction.set(newDocRef, payload);
+                                });
+                            } else {
+                                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', colName), payload);
+                            }
+                        }
+
+                        // Handle Partner Lab Bulk Test Upload via CSV parsing
+                        if (type === 'partnerLab' && window.pendingLabTests && window.pendingLabTests.length > 0) {
+                            for (const t of window.pendingLabTests) {
+                                const testPayload = {
+                                    testCode: t.testCode || t.testcode || '',
+                                    testName: t.testName || t.testname || '',
+                                    b2bPrice: t.b2bPrice || t.b2bprice || 0,
+                                    mrp: t.mrp || 0,
+                                    sampleType: t.sampleType || t.sampletype || '',
+                                    tubes: t['Tube Required'] || t['tuberequired'] || t.tubes || t['Tube Required\r'] || '',
+                                    reportingTat: t.reportingTat || t.reportingtat || '',
+                                    testNote: t.testNote || t.testnote || '',
+                                    city: 'N/A',
+                                    linkedEntity: payload.labName,
+                                    createdAt: new Date().toISOString()
+                                };
+                                await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', 'tests'), testPayload);
+                            }
+                            window.pendingLabTests = [];
+                        }
+
+                        closeModal();
                     } catch (err) {
                         console.error("Cloud sync error:", err);
                         submitBtn.disabled = false;
@@ -1379,23 +1965,357 @@
             }
         };
 
-        function generateCampID() {
-            const count = window.crmData.camps.length;
-            return `JUVIUSH${String(123 + count).padStart(4, '0')}`;
-        }
+        window.updateBookingLabList = () => {
+            const partner = document.getElementById('bookingLabPartnerSelect')?.value;
+            const labSelect = document.getElementById('bookingSpecificLabSelect');
+            if(!labSelect) return;
+            
+            if (!partner || partner === 'Juvius Internal') {
+                labSelect.innerHTML = '<option value="Juvius Internal Lab">Juvius Internal Lab</option>';
+            } else {
+                const labs = window.crmData.partner_labs.filter(pl => pl.labName === partner);
+                if(labs.length > 0) {
+                    labSelect.innerHTML = '<option value="">Select Lab Location...</option>' + labs.map(pl => `<option value="${pl.address}">${pl.labName} - ${pl.address.substring(0,20)}...</option>`).join('');
+                } else {
+                    labSelect.innerHTML = `<option value="${partner} Main Lab">${partner} Main Lab</option>`;
+                }
+            }
+            
+            window.updateAvailablePackages(partner, 'bookingPackageList');
+        };
 
-        function generateBookingID() {
-            const count = window.crmData.bookings.length;
-            return `JUVIUSB${String(1001 + count).padStart(4, '0')}`;
+        window.addTestToBooking = () => {
+            const input = document.getElementById('bookingPackageSelect');
+            const val = input.value;
+            if (!val) return;
+            const pack = window.crmData.packages.find(p => p.name === val) || window.crmData.tests.find(t => t.testName === val);
+            
+            if (!pack) {
+                alert("Please select a valid test or package from the dropdown list.");
+                return;
+            }
+            
+            if (!window.currentBookingTestsList) window.currentBookingTestsList = [];
+            if (window.currentBookingTestsList.find(t => (t.name === val || t.testName === val))) {
+                alert("Test/Package already added.");
+                input.value = '';
+                return;
+            }
+            
+            window.currentBookingTestsList.push(pack);
+            input.value = '';
+            window.renderBookingTests();
+        };
+
+        window.removeTestFromBooking = (idx) => {
+            window.currentBookingTestsList.splice(idx, 1);
+            window.renderBookingTests();
+        };
+
+        window.renderBookingTests = () => {
+            const container = document.getElementById('bookingSelectedTests');
+            const hiddenInput = document.getElementById('hiddenBookingPackage');
+            const sampleInput = document.getElementById('bookingSampleType');
+            const tubesInput = document.getElementById('bookingTubes');
+            const baseCalcInput = document.getElementById('calcBase');
+            
+            if (!container) return;
+
+            let totalBase = 0;
+            let sampleSet = new Set();
+            let tubesSet = new Set();
+            let packageNames = [];
+
+            container.innerHTML = window.currentBookingTestsList.map((t, i) => {
+                const name = t.name || t.testName;
+                const price = t.mrp || t.price || t.b2bPrice || 0;
+                totalBase += Number(price);
+                packageNames.push(name);
+                
+                if (t.sampleType) t.sampleType.split(',').forEach(s => sampleSet.add(s.trim()));
+                if (t.tubes) t.tubes.split(',').forEach(tub => tubesSet.add(tub.trim()));
+
+                return `<div class="bg-brand-50 border border-brand-200 text-brand-800 text-[10px] px-2 py-1 rounded flex items-center gap-1 font-bold shadow-sm">
+                    ${name} (₹${price}) 
+                    <button type="button" onclick="window.removeTestFromBooking(${i})" class="text-red-500 hover:text-red-700 ml-1"><i data-lucide="x" class="w-3 h-3"></i></button>
+                </div>`;
+            }).join('');
+            
+            lucide.createIcons();
+
+            if (hiddenInput) hiddenInput.value = packageNames.join(' | ');
+            if (sampleInput) sampleInput.value = Array.from(sampleSet).filter(Boolean).join(', ') || 'N/A';
+            if (tubesInput) tubesInput.value = Array.from(tubesSet).filter(Boolean).join(', ') || 'N/A';
+            
+            if (baseCalcInput) {
+                baseCalcInput.value = totalBase;
+                if (typeof window.calculateFinalAmount === 'function') window.calculateFinalAmount();
+            }
+        };
+
+        window.addTestToCamp = () => {
+            const input = document.getElementById('campPackageSelect');
+            const val = input.value;
+            if (!val) return;
+            const pack = window.crmData.packages.find(p => p.name === val) || window.crmData.tests.find(t => t.testName === val);
+            
+            if (!pack) {
+                alert("Please select a valid test or package from the dropdown list.");
+                return;
+            }
+            
+            if (!window.currentCampTestsList) window.currentCampTestsList = [];
+            if (window.currentCampTestsList.find(t => (t.name === val || t.testName === val))) {
+                alert("Test/Package already added.");
+                input.value = '';
+                return;
+            }
+            
+            window.currentCampTestsList.push(pack);
+            input.value = '';
+            window.renderCampTests();
+        };
+
+        window.removeTestFromCamp = (idx) => {
+            window.currentCampTestsList.splice(idx, 1);
+            window.renderCampTests();
+        };
+
+        window.renderCampTests = () => {
+            const container = document.getElementById('campSelectedTests');
+            const hiddenInput = document.getElementById('hiddenCampPackage');
+            const sampleInput = document.getElementById('campSampleType');
+            const tubesInput = document.getElementById('campTubes');
+            
+            if (!container) return;
+
+            let sampleSet = new Set();
+            let tubesSet = new Set();
+            let packageNames = [];
+
+            container.innerHTML = window.currentCampTestsList.map((t, i) => {
+                const name = t.name || t.testName;
+                packageNames.push(name);
+                
+                if (t.sampleType) t.sampleType.split(',').forEach(s => sampleSet.add(s.trim()));
+                if (t.tubes) t.tubes.split(',').forEach(tub => tubesSet.add(tub.trim()));
+
+                return `<div class="bg-brand-50 border border-brand-200 text-brand-800 text-[10px] px-2 py-1 rounded flex items-center gap-1 font-bold shadow-sm">
+                    ${name}
+                    <button type="button" onclick="window.removeTestFromCamp(${i})" class="text-red-500 hover:text-red-700 ml-1"><i data-lucide="x" class="w-3 h-3"></i></button>
+                </div>`;
+            }).join('');
+            
+            lucide.createIcons();
+
+            if (hiddenInput) hiddenInput.value = packageNames.join(' | ');
+            if (sampleInput) sampleInput.value = Array.from(sampleSet).filter(Boolean).join(', ') || 'N/A';
+            if (tubesInput) tubesInput.value = Array.from(tubesSet).filter(Boolean).join(', ') || 'N/A';
+        };
+
+        window.handlePackageSelection = (val, type) => {
+            if (!val) return;
+            const pack = window.crmData.packages.find(p => p.name === val) || window.crmData.tests.find(t => t.testName === val);
+            const sampleInput = document.getElementById(`${type}SampleType`);
+            const tubesInput = document.getElementById(`${type}Tubes`);
+            const baseCalcInput = document.getElementById('calcBase');
+            
+            if (pack) {
+                if (sampleInput) sampleInput.value = pack.sampleType || 'N/A';
+                if (tubesInput) tubesInput.value = pack.tubes || 'N/A';
+                if (type === 'booking' && baseCalcInput) {
+                    baseCalcInput.value = pack.mrp || pack.price || pack.b2bPrice || 0;
+                    if (typeof window.calculateFinalAmount === 'function') window.calculateFinalAmount();
+                }
+            } else {
+                if (sampleInput) sampleInput.value = '';
+                if (tubesInput) tubesInput.value = '';
+            }
+        };
+
+        window.calculateFinalAmount = () => {
+            const base = parseFloat(document.getElementById('calcBase')?.value) || 0;
+            const discType = document.getElementById('calcDiscType')?.value || 'None';
+            const discVal = parseFloat(document.getElementById('calcDiscVal')?.value) || 0;
+            const addCharges = parseFloat(document.getElementById('calcAddCharges')?.value) || 0;
+            
+            let discountAmount = 0;
+            if (discType === 'Percentage') {
+                discountAmount = base * (discVal / 100);
+            } else if (discType === 'Flat') {
+                discountAmount = discVal;
+            }
+
+            let finalAmount = base - discountAmount + addCharges;
+            finalAmount = finalAmount > 0 ? finalAmount : 0;
+
+            const finalInput = document.getElementById('calcFinal');
+            if (finalInput) finalInput.value = finalAmount;
+        };
+
+        window.cloneEntry = (collectionName, id) => {
+            const typeMap = { 'tests': 'test', 'packages': 'package' };
+            const singleType = typeMap[collectionName];
+            if (!singleType) return;
+
+            const item = window.crmData[collectionName].find(x => x.id === id);
+            if (!item) return;
+
+            window.showModal(singleType);
+            
+            setTimeout(() => {
+                const form = document.getElementById(`${singleType}-form`);
+                if (!form) return;
+
+                // Do NOT inject ID so it acts as a 'Create New' submission
+                // Populate fields
+                for (const key in item) {
+                    if (key === 'id' || key === 'createdAt' || key === 'updatedAt') continue;
+                    if (form.elements[key] && form.elements[key].type !== 'file') {
+                        form.elements[key].value = item[key];
+                    }
+                }
+
+                // Handle Checkboxes for Package cloning
+                if (singleType === 'package' && item.individualTests) {
+                    const selectedTests = item.individualTests.split(', ');
+                    const checkboxes = form.querySelectorAll('input[name="selectedTests"]');
+                    checkboxes.forEach(cb => {
+                        if (selectedTests.includes(cb.value)) cb.checked = true;
+                    });
+                }
+
+                const submitBtn = form.querySelector('button[type="submit"]');
+                if (submitBtn) submitBtn.innerText = "Save as New Cloned Record";
+            }, 50);
+        };
+
+        window.editEntry = (collectionName, id) => {
+            const typeMap = { 'camps': 'camp', 'bookings': 'booking', 'tests': 'test', 'packages': 'package', 'phlebos': 'phlebo', 'users': 'user', 'partner_labs': 'partnerLab' };
+            const singleType = typeMap[collectionName];
+            if (!singleType) return;
+
+            const item = window.crmData[collectionName].find(x => x.id === id);
+            if (!item) return;
+
+            window.showModal(singleType);
+            
+            setTimeout(() => {
+                const form = document.getElementById(`${singleType}-form`);
+                if (!form) return;
+
+                // Inject hidden ID to trigger 'update' mode
+                const idInput = document.createElement('input');
+                idInput.type = 'hidden';
+                idInput.name = 'id';
+                idInput.value = item.id;
+                form.appendChild(idInput);
+
+                // Populate fields
+                for (const key in item) {
+                    if (form.elements[key] && form.elements[key].type !== 'file') {
+                        form.elements[key].value = item[key];
+                    }
+                }
+
+                // Special handling for package checkboxes
+                if (singleType === 'package' && item.individualTests) {
+                    const selectedTests = item.individualTests.split(', ');
+                    const checkboxes = form.querySelectorAll('input[name="selectedTests"]');
+                    checkboxes.forEach(cb => {
+                        if (selectedTests.includes(cb.value)) cb.checked = true;
+                    });
+                }
+
+                // Special handling for user access checkboxes
+                if (singleType === 'user') {
+                    if (item.accessRights) {
+                        const acc = Array.isArray(item.accessRights) ? item.accessRights : [item.accessRights];
+                        form.querySelectorAll('input[name="accessRights"]').forEach(cb => {
+                            if (acc.includes(cb.value)) cb.checked = true;
+                        });
+                    }
+                    if (item.actionRights) {
+                        const act = Array.isArray(item.actionRights) ? item.actionRights : [item.actionRights];
+                        form.querySelectorAll('input[name="actionRights"]').forEach(cb => {
+                            if (act.includes(cb.value)) cb.checked = true;
+                        });
+                    }
+                }
+
+                const submitBtn = form.querySelector('button[type="submit"]');
+                if (submitBtn) submitBtn.innerText = "Update Existing Record";
+
+                // Re-trigger dropdown logic if necessary
+                if (singleType === 'booking') {
+                    window.updateEntityList();
+                    setTimeout(() => {
+                        if (form.elements['entityName']) {
+                            form.elements['entityName'].value = item['entityName'];
+                        }
+                        if (form.elements['labPartner']) {
+                            form.elements['labPartner'].value = item['labPartner'] || 'Juvius Internal';
+                            window.updateBookingLabList();
+                            setTimeout(() => {
+                                if (form.elements['partnerLab']) {
+                                    form.elements['partnerLab'].value = item['partnerLab'] || 'Juvius Internal Lab';
+                                }
+                                if (item['package']) {
+                                    window.currentBookingTestsList = [];
+                                    const packNames = item['package'].split(' | ');
+                                    packNames.forEach(val => {
+                                        const pack = window.crmData.packages.find(p => p.name === val) || window.crmData.tests.find(t => t.testName === val);
+                                        if (pack) window.currentBookingTestsList.push(pack);
+                                        else window.currentBookingTestsList.push({ name: val, mrp: 0, sampleType: 'Unknown', tubes: 'Unknown' }); // Fallback
+                                    });
+                                    window.renderBookingTests();
+                                }
+                            }, 50);
+                        }
+                    }, 50);
+                } else if (singleType === 'camp') {
+                    window.updateCampClientList();
+                    setTimeout(() => {
+                        if (form.elements['clientName']) {
+                            form.elements['clientName'].value = item['clientName'];
+                            window.updateAvailablePackages(item['clientName'], 'campPackageList');
+                            setTimeout(() => {
+                                if (item['packageName']) {
+                                    window.currentCampTestsList = [];
+                                    const packNames = item['packageName'].split(' | ');
+                                    packNames.forEach(val => {
+                                        const pack = window.crmData.packages.find(p => p.name === val) || window.crmData.tests.find(t => t.testName === val);
+                                        if (pack) window.currentCampTestsList.push(pack);
+                                        else window.currentCampTestsList.push({ name: val, mrp: 0, sampleType: 'Unknown', tubes: 'Unknown' }); // Fallback
+                                    });
+                                    window.renderCampTests();
+                                }
+                            }, 50);
+                        }
+                    }, 50);
+                }
+            }, 50);
+        };
+
+        function generatePhleboID(name) {
+            const prefix = name ? name.replace(/\s+/g, '').substring(0, 3).toUpperCase().padEnd(3, 'X') : 'PHL';
+            const date = new Date();
+            const d = String(date.getDate()).padStart(2, '0');
+            const m = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+            const y = String(date.getFullYear());
+            return `${prefix}${d}${m}${y}`;
         }
 
         window.updateCampClientList = () => {
             const clientSelect = document.getElementById('campClientSelect');
             if (!clientSelect) return;
 
+            const activeUser = window.getActiveUser();
+            const isRestricted = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+
             // --- Restricted User Access Logic for Camps ---
-            if (window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity) {
-                const entityName = window.currentSimulatedUser.associatedEntity;
+            if (isRestricted) {
+                const entityName = isRestricted;
                 clientSelect.innerHTML = `<option value="${entityName}">${entityName}</option>`;
                 clientSelect.disabled = true;
 
@@ -1409,6 +2329,7 @@
                     clientSelect.parentNode.appendChild(hiddenClient);
                 }
                 hiddenClient.value = entityName;
+                window.updateAvailablePackages(entityName, 'campPackageList');
             } else {
                 clientSelect.disabled = false;
                 const hiddenClient = document.getElementById('hiddenCampClient');
@@ -1420,6 +2341,7 @@
                     ...window.crmData.partners.map(p => `<option value="${p.name}">[Partner] ${p.name}</option>`)
                 ];
                 clientSelect.innerHTML = '<option value="">Select Entity...</option>' + allEntities.join('');
+                window.updateAvailablePackages('', 'campPackageList');
             }
         };
 
@@ -1427,8 +2349,11 @@
             const entitySelect = document.getElementById('logisticsEntitySelect');
             if (!entitySelect) return;
 
-            if (window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity) {
-                const entityName = window.currentSimulatedUser.associatedEntity;
+            const activeUser = window.getActiveUser();
+            const isRestricted = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+
+            if (isRestricted) {
+                const entityName = isRestricted;
                 entitySelect.innerHTML = `<option value="${entityName}">${entityName}</option>`;
                 entitySelect.disabled = true;
 
@@ -1518,14 +2443,23 @@
         window.calculatePackagePrice = () => {
             let b2bTotal = 0;
             let mrpTotal = 0;
+            let tubesSet = new Set();
+            let sampleSet = new Set();
             document.querySelectorAll('input[name="selectedTests"]:checked').forEach(cb => {
                 b2bTotal += Number(cb.getAttribute('data-b2b') || 0);
                 mrpTotal += Number(cb.getAttribute('data-mrp') || 0);
+                const t = cb.getAttribute('data-tubes'); if(t && t.trim() !== '' && t !== 'undefined') tubesSet.add(t);
+                const s = cb.getAttribute('data-sample'); if(s && s.trim() !== '' && s !== 'undefined') sampleSet.add(s);
             });
             const b2bInput = document.getElementById('pkgB2B');
             const mrpInput = document.getElementById('pkgMRP');
+            const tubesInput = document.getElementById('pkgTubes');
+            const sampleInput = document.getElementById('pkgSampleType');
+            
             if(b2bInput) b2bInput.value = b2bTotal;
             if(mrpInput) mrpInput.value = mrpTotal;
+            if(tubesInput) tubesInput.value = Array.from(tubesSet).join(', ');
+            if(sampleInput) sampleInput.value = Array.from(sampleSet).join(', ');
         };
 
         window.updateVisitTypes = () => {
@@ -1550,10 +2484,13 @@
             const nameSelect = document.getElementById('entityNameSelect');
             if (!catSelect || !nameSelect) return;
 
+            const activeUser = window.getActiveUser();
+            const isRestricted = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser : null;
+
             // --- Restricted User Access Logic ---
-            if (window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity) {
-                const role = window.currentSimulatedUser.role;
-                const entityName = window.currentSimulatedUser.associatedEntity;
+            if (isRestricted && isRestricted.associatedEntity) {
+                const role = isRestricted.role;
+                const entityName = isRestricted.associatedEntity;
                 
                 if (role === 'Corporate Client') {
                     catSelect.value = 'Corporate Client';
@@ -1588,7 +2525,7 @@
             let optionsHTML = '<option value="">Select specific entity...</option>';
 
             if (category === 'Direct Patient') {
-                optionsHTML = '<option value="N/A">N/A (Direct Patient)</option>';
+                optionsHTML = '<option value="Juvius Healthcare">Juvius Healthcare Internal</option>';
             } else if (category === 'Corporate Client') {
                 const clients = window.crmData.clients;
                 optionsHTML += clients.length ? clients.map(c => `<option value="${c.name}">${c.name}</option>`).join('') : '<option value="">No Corporate Clients found</option>';
@@ -1661,11 +2598,14 @@
                 h = "name,degree,contact,email,city,state,exp,upi,address,mapLink,aadhar,pan";
                 row = "Amit Kumar,DMLT,9876543210,amit@email.com,Delhi,Delhi,5,amit@upi,Flat 101 Rohini Sector 3,https://maps.app.goo.gl/sample2,123456789012,ABCDE1234F";
             } else if (type === 'bookings') {
-                h = "patientName,email,age,gender,mobile,bookingType,entityCategory,entityName,package,partnerLab,visitType,date,time,address,mapLink,amount";
-                row = "Priya Patel,priya@email.com,32,Female,9876543211,Pathology,Direct Patient,N/A,Comprehensive Full Body Profile,Apollo Labs,Home Collection,2024-10-15,08:30 AM,Koramangala Bangalore,https://maps.app.goo.gl/sample3,2500";
+                h = "patientName,email,age,gender,mobile,bookingType,entityCategory,entityName,labPartner,partnerLab,package,visitType,date,time,city,state,pincode,address,mapLink,amount,paymentMode,baseAmount,discountType,discountValue,additionalCharges,additionalRemarks";
+                row = "Priya Patel,priya@email.com,32,Female,9876543211,Pathology,Direct Patient,Juvius Healthcare,Juvius Internal,Juvius Internal Lab,Comprehensive Full Body Profile,Home Collection,2024-10-15,08:30 AM,Bangalore,Karnataka,560034,Koramangala Bangalore,https://maps.app.goo.gl/sample3,2500,Prepaid,2500,None,0,0,None";
             } else if (type === 'tests') {
-                h = "testCode,testName,b2bPrice,mrp,sampleType,reportingTat,city,testNote";
-                row = "CBC01,Complete Blood Count,150,300,EDTA Whole Blood,12 Hours,PAN India,Fasting not required";
+                h = "testCode,testName,b2bPrice,mrp,sampleType,tubes,reportingTat,city,testNote";
+                row = "CBC01,Complete Blood Count,150,300,EDTA Whole Blood,Lavender Top (EDTA),12 Hours,PAN India,Fasting not required";
+            } else if (type === 'lab_tests') {
+                h = "testCode,testName,b2bPrice,mrp,sampleType,Tube Required,reportingTat,testNote";
+                row = "CBC01,Complete Blood Count,150,300,EDTA Whole Blood,Lavender Top (EDTA),12 Hours,Fasting not required";
             } else if (type === 'vendors') {
                 h = "firmName,vendorType,owner,contact,gstin,pan,spocName,spocNumber,city,address,mapLink";
                 row = "MediSupply Co,Consumables & Kits,Dr. Ramesh,9876543212,22AAAAA0000A1Z5,FGHIJ5678K,Suresh,9876543213,Pune,Industrial Estate Phase 1,https://maps.app.goo.gl/sample4";
@@ -1675,9 +2615,12 @@
             } else if (type === 'partners') {
                 h = "name,category,spocName,contact,city,address,mapLink,gstin,pan";
                 row = "City Diagnostics,Pathology Partners,Dr. Amit,9876543215,Chennai,Shivaji Nagar Chennai,https://maps.app.goo.gl/sample6,22AAAAA0000A1Z5,QRSTU3456V";
+            } else if (type === 'partner_labs') {
+                h = "labName,labType,spocName,spocNumber,address,timings";
+                row = "Apollo Diagnostics,Pathology,Dr. Sharma,9876543210,Koramangala Bangalore,08:00 AM - 08:00 PM";
             } else if (type === 'users') {
-                h = "name,email,mobile,role,accessRights";
-                row = "Rajeev Sharma,rajeev@juvius.com,9876543210,Executive,Overview | Bookings | Camps";
+                h = "name,email,mobile,role,accessRights,actionRights";
+                row = "Rajeev Sharma,rajeev@juvius.com,9876543210,Executive,Overview | Bookings | Camps,Edit Bookings | Approve Records";
             } else if (type === 'download_reports') {
                 h = "bookingId";
                 row = "JUVIUSB1001\nJUVIUSB1002\nJUVIUSB1003";
@@ -1737,7 +2680,15 @@
                 if (bIdIndex === -1) { alert('CSV must contain a bookingId column.'); return; }
 
                 const targetIds = lines.slice(1).map(l => l.split(',')[bIdIndex].trim());
-                const matchedBookings = window.crmData.bookings.filter(b => targetIds.includes(b.bookingId) && b.reportFile);
+                
+                const activeUser = window.getActiveUser();
+                const restrictEntity = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive') ? activeUser.associatedEntity : null;
+
+                const matchedBookings = window.crmData.bookings.filter(b => 
+                    targetIds.includes(b.bookingId) && 
+                    b.reportFile && 
+                    (!restrictEntity || b.entityName === restrictEntity)
+                );
                 
                 const resDiv = document.getElementById('bulk-download-results');
                 resDiv.classList.remove('hidden');
@@ -1800,10 +2751,52 @@
                         const values = line.split(',').map(v => v.trim());
                         return headers.reduce((obj, header, i) => { obj[header] = values[i] || ''; return obj; }, {});
                     });
-                    for (const i of data) {
-                        if (type === 'camps') i.campCode = generateCampID() + Math.random().toString(36).substr(2, 2);
-                        if (type === 'bookings') i.bookingId = generateBookingID() + Math.random().toString(36).substr(2, 2);
-                        await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', type), { ...i, createdAt: new Date().toISOString() });
+                    
+                    if (type === 'camps' || type === 'bookings') {
+                        try {
+                            const counterRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'counters', 'idTracker');
+                            await runTransaction(db, async (transaction) => {
+                                const counterDoc = await transaction.get(counterRef);
+                                let currentCount = 0;
+                                let updateData = {};
+                                const field = type === 'camps' ? 'campCount' : 'bookingCount';
+                                
+                                if (counterDoc.exists()) {
+                                    currentCount = counterDoc.data()[field] || (type === 'camps' ? window.crmData.camps.length : window.crmData.bookings.length);
+                                } else {
+                                    currentCount = type === 'camps' ? window.crmData.camps.length : window.crmData.bookings.length;
+                                    updateData = { campCount: window.crmData.camps.length, bookingCount: window.crmData.bookings.length };
+                                }
+                                
+                                for (const i of data) {
+                                    currentCount++;
+                                    if (type === 'camps') i.campCode = `CAMP${String(currentCount).padStart(4, '0')}`;
+                                    if (type === 'bookings') i.bookingId = String(90325 + currentCount).padStart(6, '0');
+                                    i.createdAt = new Date().toISOString();
+                                    
+                                    const newDocRef = doc(collection(db, 'artifacts', APP_ID, 'public', 'data', type));
+                                    transaction.set(newDocRef, i);
+                                }
+                                
+                                updateData[field] = currentCount;
+                                if (!counterDoc.exists()) {
+                                    transaction.set(counterRef, updateData);
+                                } else {
+                                    transaction.update(counterRef, updateData);
+                                }
+                            });
+                        } catch(err) {
+                            console.error("Bulk upload transaction failed:", err);
+                        }
+                    } else if (type === 'partner_labs') {
+                        for (const i of data) {
+                            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', type), { ...i, createdAt: new Date().toISOString() });
+                        }
+                    } else {
+                        for (const i of data) {
+                            if (type === 'phlebos') i.phleboCode = generatePhleboID(i.name) + Math.random().toString(36).substr(2, 2).toUpperCase();
+                            await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', type), { ...i, createdAt: new Date().toISOString() });
+                        }
                     }
                 };
                 r.readAsText(file);
@@ -1816,25 +2809,139 @@
             if (!camp) return;
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
-            const pack = window.crmData.packages.find(p => p.name === camp.packageName) || window.crmData.tests.find(t => t.testName === camp.packageName);
+            
+            let totalB2B = 0;
+            let aggTubes = new Set();
+            let aggGear = new Set();
+            
+            const packNames = (camp.packageName || '').split(' | ');
+            packNames.forEach(val => {
+                const pack = window.crmData.packages.find(p => p.name === val) || window.crmData.tests.find(t => t.testName === val);
+                if(pack) {
+                    totalB2B += Number(pack.b2bPrice || pack.price || 0);
+                    if(pack.tubes) pack.tubes.split(',').forEach(x => aggTubes.add(x.trim()));
+                    if(pack.equipment) pack.equipment.split(',').forEach(x => aggGear.add(x.trim()));
+                }
+            });
 
             if (type === 'invoice') {
-                const b2bRate = pack?.b2bPrice || pack?.price || 0;
                 doc.setFontSize(22); doc.setTextColor(21, 128, 61); doc.text("JUVIUS HEALTHCARE", 105, 20, { align: 'center' });
                 doc.setFontSize(10); doc.setTextColor(0, 0, 0); doc.text("MEDICAL CAMP PIPELINE INVOICE", 105, 28, { align: 'center' });
                 doc.text(`ID: ${camp.campCode}`, 20, 45); doc.text(`Client: ${camp.clientName}`, 20, 52);
-                doc.autoTable({ startY: 65, head: [['Description', 'Rate', 'Qty', 'Total']], body: [[camp.packageName, b2bRate, camp.totalCounts, (Number(b2bRate) * Number(camp.totalCounts))]], theme: 'striped', headStyles: { fillColor: [21, 128, 61] }});
+                doc.autoTable({ startY: 65, head: [['Description', 'Rate', 'Qty', 'Total']], body: [[camp.packageName, totalB2B, camp.totalCounts, (totalB2B * Number(camp.totalCounts))]], theme: 'striped', headStyles: { fillColor: [21, 128, 61] }});
                 doc.save(`Invoice_${camp.campCode}.pdf`);
             } else {
                 doc.setFontSize(20); doc.setTextColor(21, 128, 61); doc.text("CAMP OPERATION SHEET", 105, 20, { align: 'center' });
                 doc.setTextColor(0, 0, 0); doc.setFontSize(11);
-                const body = [["Camp Code", camp.campCode], ["Client", camp.clientName], ["Venue", camp.address], ["SPOC", `${camp.spocName} (${camp.spocDetails})`], ["Schedule", `${camp.startDate} - ${camp.endDate}`], ["Specialist", camp.assignedPhlebo || 'Pending'], ["Tubes/Sample", pack?.tubes || pack?.sampleType || 'Std'], ["Gear", pack?.equipment || 'Std'], ["Reporting Flow", camp.reportsCommunication], ["Hard Copy", camp.hardCopyRequired]];
+                const body = [["Camp Code", camp.campCode], ["Client", camp.clientName], ["Venue", camp.address], ["SPOC", `${camp.spocName} (${camp.spocDetails})`], ["Schedule", `${camp.startDate} - ${camp.endDate}`], ["Specialist", camp.assignedPhlebo || 'Pending'], ["Tubes/Sample", camp.tubes || Array.from(aggTubes).join(', ') || 'Std'], ["Gear", Array.from(aggGear).join(', ') || 'Std'], ["Reporting Flow", camp.reportsCommunication], ["Hard Copy", camp.hardCopyRequired]];
                 doc.autoTable({ startY: 35, body, theme: 'plain', styles: { cellPadding: 3 }, columnStyles: { 0: { fontStyle: 'bold', width: 60 } }});
                 doc.save(`Details_${camp.campCode}.pdf`);
             }
         };
 
+        window.toggleSelectAll = (source, selector) => {
+            const checkboxes = document.querySelectorAll(selector);
+            checkboxes.forEach(cb => cb.checked = source.checked);
+        };
+
+        window.approveSelected = async (collectionName) => {
+            if (!window.hasActionRight('Approve Records')) {
+                alert('Unauthorized: You do not have permission to approve records.');
+                return;
+            }
+            const checkboxes = document.querySelectorAll(`.row-checkbox-${collectionName}:checked`);
+            const ids = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (ids.length === 0) return;
+
+            if (confirm(`Are you sure you want to approve the ${ids.length} selected records?`)) {
+                try {
+                    for (const id of ids) {
+                        await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', collectionName, id), {
+                            approvalStatus: 'Approved',
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
+                } catch (err) {
+                    console.error("Bulk approval error:", err);
+                }
+            }
+        };
+
+        window.deleteSelected = async (collectionName) => {
+            const checkboxes = document.querySelectorAll(`.row-checkbox-${collectionName}:checked`);
+            const ids = Array.from(checkboxes).map(cb => cb.value);
+
+            if (ids.length === 0) return;
+
+            if (confirm(`Are you sure you want to PERMANENTLY delete the ${ids.length} selected records?`)) {
+                try {
+                    for (const id of ids) {
+                        await deleteDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', collectionName, id));
+                    }
+                } catch (err) {
+                    console.error("Bulk deletion error:", err);
+                }
+            }
+        };
+
+        window.handleRowAction = async (action, id) => {
+            if (action === 'Align') {
+                window.editEntry('bookings', id);
+                return;
+            }
+            if (action === 'Report') {
+                window.switchTab('upload_reports');
+                setTimeout(() => {
+                    const select = document.querySelector('select[name="bookingId"]');
+                    if (select) select.value = id;
+                }, 500);
+                return;
+            }
+
+            if (action === 'Approve' && !window.hasActionRight('Approve Records')) {
+                alert('Unauthorized: You do not have permission to approve records.');
+                return;
+            }
+
+            let stateName = action === 'Approve' ? 'Approved' : (action === 'Collected' ? 'Sample Collected' : 'Lab Reached');
+            
+            if (!confirm(`Confirm workflow progression: Update status to '${stateName}'?`)) return;
+            
+            try {
+                const payload = { updatedAt: new Date().toISOString() };
+                if (action === 'Approve') payload.approvalStatus = 'Approved';
+                if (action === 'Collected') payload.sampleCollected = true;
+                if (action === 'Reached') payload.sampleReached = true;
+                await updateDoc(doc(db, 'artifacts', APP_ID, 'public', 'data', 'bookings', id), payload);
+            } catch (err) {
+                console.error("Status update error:", err);
+                alert("Failed to update status in cloud.");
+            }
+        };
+
         window.handleLogout = () => signOut(auth).then(() => location.reload());
+
+        // --- 30-Minute Inactivity Timeout Logic (Multi-Tab Supported) ---
+        const resetInactivityTimer = () => {
+            localStorage.setItem('juvius_last_activity', Date.now().toString());
+        };
+
+        setInterval(() => {
+            const lastActivity = localStorage.getItem('juvius_last_activity');
+            if (lastActivity && (Date.now() - parseInt(lastActivity)) > 30 * 60 * 1000) {
+                if (auth.currentUser) {
+                    localStorage.removeItem('juvius_last_activity');
+                    window.handleLogout();
+                }
+            }
+        }, 60000); // Check every minute
+
+        ['click', 'mousemove', 'keypress', 'scroll', 'touchstart'].forEach(evt => {
+            document.addEventListener(evt, resetInactivityTimer, true);
+        });
+        resetInactivityTimer();
+        // ------------------------------------------
 
         startApp();
     </script>
