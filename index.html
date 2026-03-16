@@ -1551,7 +1551,10 @@
                     </form>
                 `;
             } else if (type === 'booking') {
-                const isRestricted = window.currentSimulatedUser && window.currentSimulatedUser.associatedEntity;
+                const activeUser = window.getActiveUser();
+                const isRestrictedUser = (activeUser && activeUser.role !== 'Admin' && activeUser.role !== 'Executive');
+                const lockAttr = isRestrictedUser ? 'disabled title="Locked. Admin Allocation Only" style="background-color: #f3f4f6; cursor: not-allowed;"' : '';
+
                 html = `
                     <h2 class="text-2xl font-black mb-6 text-brand-900 uppercase tracking-tight">New Patient Record</h2>
                     <form id="booking-form" class="grid grid-cols-2 gap-4 text-xs">
@@ -1580,16 +1583,36 @@
                             <option value="Juvius Healthcare">Juvius Healthcare Internal</option>
                         </select></div>
 
-                        <div><label class="form-label">Assign Phlebotomist (Admin Allocation)</label><select name="assignedPhlebo" class="input-field font-bold uppercase text-[11px] tracking-tight" ${isRestricted ? 'disabled title="Only Juvius Admin can assign"' : ''}><option value="">Unassigned (Pending)</option>${window.crmData.phlebos.map(p => `<option value="${p.name}">${p.name} (${p.city})</option>`).join('')}</select></div>
+                        <div>
+                            <label class="form-label">Assign Phlebotomist (Admin Allocation)</label>
+                            <select name="assignedPhlebo" class="input-field font-bold uppercase text-[11px] tracking-tight" ${lockAttr}>
+                                <option value="">Unassigned (Pending)</option>
+                                ${window.crmData.phlebos.map(p => `<option value="${p.name}">${p.name} (${p.city})</option>`).join('')}
+                            </select>
+                        </div>
                         
-                        <div><label class="form-label">Assigned Lab Partner</label><select name="labPartner" id="bookingLabPartnerSelect" onchange="window.updateBookingLabList()" required class="input-field font-bold uppercase text-[11px] tracking-tight">
-                            <option value="">Select Lab Partner...</option>
-                            <option value="Juvius Internal">Juvius Internal</option>
-                            ${window.crmData.partners.filter(p => p.category.includes('Pathology') || p.category.includes('Radiology')).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}
-                        </select></div>
-                        <div class="col-span-2"><label class="form-label">Assigned Laboratory (Location)</label><select name="partnerLab" id="bookingSpecificLabSelect" required class="input-field font-bold uppercase text-[11px] tracking-tight">
-                            <option value="">Select Lab Location...</option>
-                        </select></div>
+                        <div>
+                            <label class="form-label">Assigned Lab Partner</label>
+                            <select name="labPartner" id="bookingLabPartnerSelect" onchange="window.updateBookingLabList()" required class="input-field font-bold uppercase text-[11px] tracking-tight" ${lockAttr}>
+                                ${isRestrictedUser ? 
+                                    `<option value="Juvius Internal" selected>Juvius Internal</option>` : 
+                                    `<option value="">Select Lab Partner...</option>
+                                     <option value="Juvius Internal">Juvius Internal</option>
+                                     ${window.crmData.partners.filter(p => p.category.includes('Pathology') || p.category.includes('Radiology')).map(p => `<option value="${p.name}">${p.name}</option>`).join('')}`
+                                }
+                            </select>
+                            ${isRestrictedUser ? `<input type="hidden" name="labPartner" value="Juvius Internal">` : ''}
+                        </div>
+                        <div class="col-span-2">
+                            <label class="form-label">Assigned Laboratory (Location)</label>
+                            <select name="partnerLab" id="bookingSpecificLabSelect" required class="input-field font-bold uppercase text-[11px] tracking-tight" ${lockAttr}>
+                                ${isRestrictedUser ? 
+                                    `<option value="Juvius Internal Lab" selected>Juvius Internal Lab</option>` : 
+                                    `<option value="">Select Lab Location...</option>`
+                                }
+                            </select>
+                            ${isRestrictedUser ? `<input type="hidden" name="partnerLab" value="Juvius Internal Lab">` : ''}
+                        </div>
                         
                         <div class="col-span-2">
                             <label class="form-label">Medical Case Definition (Search & Add Packages/Tests)</label>
