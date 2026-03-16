@@ -97,7 +97,7 @@
 <body class="overflow-hidden">
 
     <!-- Login Overlay -->
-    <div id="auth-overlay" class="fixed inset-0 bg-[#f7f9f9] z-[100] flex items-center justify-center p-4">
+<div id="auth-overlay" class="fixed inset-0 bg-[#f7f9f9] z-[100] flex flex-col items-center justify-center p-4">
         
         <div class="absolute inset-0 z-0 opacity-[0.04]" style="background-image: radial-gradient(#153b36 1.5px, transparent 1.5px), radial-gradient(#153b36 1.5px, transparent 1.5px); background-size: 24px 24px; background-position: 0 0, 12px 12px;"></div>
         
@@ -105,7 +105,7 @@
             <div class="absolute top-0 left-0 right-0 h-1.5 bg-brand-600"></div>
             
             <div class="flex flex-col items-center mb-8 mt-2">
-                <img src="https://drive.google.com/thumbnail?id=1GMNSIb_uMAwqBQxzp2PQTXMnhiH0Gv6-&sz=w800" alt="Juvius Logo" class="h-48 md:h-56 w-auto mb-6 object-contain drop-shadow-md">
+                <img src="https://drive.google.com/thumbnail?id=1GMNSIb_uMAwqBQxzp2PQTXMnhiH0Gv6-&sz=w800" alt="Juvius Logo" class="h-20 md:h-24 w-auto mb-5 object-contain drop-shadow-md">
                 <h2 class="text-xl font-heading font-black text-gray-800 tracking-widest uppercase">CRM Cloud Access</h2>
             </div>
             
@@ -126,41 +126,8 @@
                 </button>
             </form>
         </div>
-    </div>
-        
-        <div class="mb-10 text-center flex flex-col items-center scale-in">
-            <img src="https://drive.google.com/thumbnail?id=1GMNSIb_uMAwqBQxzp2PQTXMnhiH0Gv6-&sz=w800" alt="Juvius Logo" class="h-28 w-auto mb-6"> 
-            <h1 class="font-heading font-black text-3xl md:text-4xl text-brand-900 tracking-tighter uppercase leading-tight">Juvius Healthcare CRM Login</h1>
-        </div>
 
-        <div class="package-card w-full max-w-md p-8 md:p-10 scale-in">
-            <h3 class="font-heading font-bold text-xl text-brand-900 mb-6 border-b border-brand-100 pb-3">Secure Access Portal</h3>
-            
-            <form id="login-form" onsubmit="window.handleEmailLogin(event)" class="space-y-5">
-                <div>
-                    <label class="form-label text-xs">Email Address</label>
-                    <input type="email" id="login-email" required class="input-field py-3" placeholder="Enter your email">
-                </div>
-                
-                <div>
-                    <label class="form-label text-xs">Password</label>
-                    <input type="password" id="login-password" required class="input-field py-3" placeholder="•••••••••••••">
-                </div>
-
-                <div id="login-error" class="text-red-500 text-xs font-bold hidden text-center bg-red-50 py-2 rounded">Invalid credentials.</div>
-                
-                <button type="submit" id="login-btn" class="btn-primary w-full text-sm py-3.5 mt-4 uppercase tracking-widest font-black shadow-lg">
-                    <i data-lucide="key-round" class="w-4 h-4 mr-2"></i>
-                    Authenticate
-                </button>
-            </form>
-            
-            <div class="text-center mt-8 border-t border-gray-100 pt-6">
-                <p class="text-xs text-gray-500">Need help? <a href="#" class="font-bold text-brand-600 hover:text-accent-500">Contact IT Support</a></p>
-            </div>
-        </div>
-
-        <div class="mt-12 text-center flex flex-col items-center scale-in">
+        <div class="mt-12 text-center flex flex-col items-center scale-in z-10">
             <p class="text-xs text-gray-500 font-semibold">&copy; 2026 Juvius Healthcare Internal Operations.</p>
             <p class="text-[10px] text-gray-400 mt-1 max-w-md">Strictly Confidential and Protected. Unauthorized access is prohibited and monitored.</p>
         </div>
