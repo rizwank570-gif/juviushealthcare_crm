@@ -11,29 +11,38 @@
                 extend: {
                     colors: {
                         brand: {
-                            50: '#f0fdf4',
-                            100: '#dcfce7',
-                            200: '#bbf7d0',
-                            300: '#86efac',
-                            400: '#4ade80',
-                            500: '#22c55e',
-                            600: '#15803d', /* Juvius Primary Dark Green */
-                            700: '#166534',
-                            800: '#14532d',
-                            900: '#14462b',
+                            50: '#f0f7f5', /* Soft Clinical Mint */
+                            100: '#e4efec',
+                            200: '#c8dfdb',
+                            300: '#b0c2bf',
+                            400: '#8ba6a2',
+                            500: '#5a7a75',
+                            600: '#153b36', /* Deep Dark Teal */
+                            700: '#0e2a26',
+                            800: '#081a18',
+                            900: '#040d0c',
+                        },
+                        accent: {
+                            500: '#e86b32', /* Warm Coral */
+                            600: '#cf5e29',
                         }
+                    },
+                    fontFamily: {
+                        sans: ['Open Sans', 'sans-serif'],
+                        heading: ['Poppins', 'sans-serif'],
                     }
                 }
             }
         }
     </script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
     
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #F3F4F6; color: #1F2937; position: relative; }
+        body { font-family: 'Open Sans', sans-serif; background-color: #f7f9f9; color: #374151; position: relative; }
+        h1, h2, h3, h4, h5, h6, .brand-font { font-family: 'Poppins', sans-serif; }
         
         /* Logo Background Watermark */
         #content-area::before {
@@ -48,33 +57,39 @@
             background-size: contain;
             background-repeat: no-repeat;
             background-position: center;
-            opacity: 0.05;
+            opacity: 0.03;
             pointer-events: none;
             z-index: 0;
         }
         
-        .sidebar-active { background-color: #15803d !important; color: white !important; box-shadow: 0 4px 6px -1px rgba(21, 128, 61, 0.3); }
-        .btn-primary { background-color: #15803d; color: white; border-radius: 6px; padding: 10px 20px; font-weight: 600; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; cursor: pointer; border: none; }
-        .btn-primary:hover { background-color: #166534; transform: translateY(-1px); }
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-        .btn-secondary { background-color: #f3f4f6; color: #374151; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 20px; font-weight: 600; font-size: 14px; cursor: pointer; }
-        .btn-sample { background-color: #f0fdf4; color: #15803d; border: 1px dashed #bbf7d0; border-radius: 6px; padding: 8px 16px; font-weight: 600; font-size: 11px; transition: all 0.2s; cursor: pointer; display: flex; align-items: center; gap: 4px; }
-        .btn-sample:hover { background-color: #dcfce7; }
+        .sidebar-active { background-color: #153b36 !important; color: white !important; box-shadow: 0 4px 6px -1px rgba(21, 59, 54, 0.3); border-left: 4px solid #e86b32; }
+        .btn-primary { background-color: #153b36; color: white; border-radius: 6px; padding: 10px 20px; font-weight: 600; transition: all 0.3s ease; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; cursor: pointer; border: none; font-family: 'Poppins', sans-serif; }
+        .btn-primary:hover { background-color: #0e2a26; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(21, 59, 54, 0.2); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
         
-        .package-card { background: white; border: 1px solid #E5E7EB; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; z-index: 1; }
+        .btn-secondary { background-color: #ffffff; color: #374151; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px 20px; font-weight: 600; font-size: 14px; cursor: pointer; font-family: 'Poppins', sans-serif; transition: all 0.3s ease; }
+        .btn-secondary:hover { background-color: #f7f9f9; border-color: #b0c2bf; }
+        
+        .btn-sample { background-color: #f0f7f5; color: #153b36; border: 1px dashed #c8dfdb; border-radius: 6px; padding: 8px 16px; font-weight: 600; font-size: 11px; transition: all 0.3s ease; cursor: pointer; display: flex; align-items: center; gap: 4px; font-family: 'Poppins', sans-serif; }
+        .btn-sample:hover { background-color: #e4efec; border-color: #153b36; }
+        
+        .package-card { background: white; border: 1px solid #e2ecea; border-radius: 12px; box-shadow: 0 4px 15px rgba(21, 59, 54, 0.05); position: relative; z-index: 1; transition: all 0.3s ease; }
+        .package-card:hover { box-shadow: 0 10px 25px -5px rgba(21, 59, 54, 0.1); transform: translateY(-2px); }
+        
         .status-badge { padding: 4px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; border: 1px solid; }
         
-        .input-field { width: 100%; padding: 10px 14px; background-color: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; font-size: 14px; font-weight: 500; }
-        .input-field:focus { outline: none; border-color: #15803d; background-color: white; box-shadow: 0 0 0 2px rgba(21, 128, 61, 0.1); }
-        .form-label { display: block; font-size: 10px; font-weight: 800; color: #6B7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; margin-left: 2px; }
+        .input-field { width: 100%; padding: 10px 14px; background-color: #f7f9f9; border: 1px solid #e2ecea; border-radius: 8px; font-size: 14px; font-weight: 500; transition: all 0.3s ease; }
+        .input-field:focus { outline: none; border-color: #153b36; background-color: white; box-shadow: 0 0 0 3px rgba(21, 59, 54, 0.1); }
+        .form-label { display: block; font-size: 10px; font-weight: 800; color: #5a7a75; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; margin-left: 2px; font-family: 'Poppins', sans-serif; }
 
-        .table-header { background-color: #F9FAFB; font-size: 10px; font-weight: 800; color: #4B5563; text-transform: uppercase; letter-spacing: 0.05em; padding: 16px 24px; }
-        .modal-bg { background-color: rgba(0,0,0,0.6); backdrop-filter: blur(4px); }
-        .scale-in { animation: scaleIn 0.2s ease-out; }
-        @keyframes scaleIn { from { transform: scale(0.98); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .table-header { background-color: #f0f7f5; font-size: 10px; font-weight: 800; color: #153b36; text-transform: uppercase; letter-spacing: 0.05em; padding: 16px 24px; font-family: 'Poppins', sans-serif;}
+        .modal-bg { background-color: rgba(21, 59, 54, 0.7); backdrop-filter: blur(4px); }
+        .scale-in { animation: scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes scaleIn { from { transform: scale(0.95) translateY(10px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
         
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #E5E7EB; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f7f9f9; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #b0c2bf; border-radius: 10px; }
         
         #content-area { position: relative; z-index: 1; }
     </style>
