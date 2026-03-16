@@ -97,7 +97,36 @@
 <body class="overflow-hidden">
 
     <!-- Login Overlay -->
-    <div id="auth-overlay" class="fixed inset-0 bg-[#f7f9f9] z-[100] flex flex-col items-center justify-center p-4">
+    <div id="auth-overlay" class="fixed inset-0 bg-[#f7f9f9] z-[100] flex items-center justify-center p-4">
+        
+        <div class="absolute inset-0 z-0 opacity-[0.04]" style="background-image: radial-gradient(#153b36 1.5px, transparent 1.5px), radial-gradient(#153b36 1.5px, transparent 1.5px); background-size: 24px 24px; background-position: 0 0, 12px 12px;"></div>
+        
+        <div class="w-full max-w-md bg-white rounded-md shadow-2xl p-8 md:p-10 relative overflow-hidden z-10 scale-in border border-gray-200">
+            <div class="absolute top-0 left-0 right-0 h-1.5 bg-brand-600"></div>
+            
+            <div class="flex flex-col items-center mb-8 mt-2">
+                <img src="https://drive.google.com/thumbnail?id=1GMNSIb_uMAwqBQxzp2PQTXMnhiH0Gv6-&sz=w800" alt="Juvius Logo" class="h-16 w-auto mb-4 object-contain">
+                <h2 class="text-xl font-heading font-black text-gray-800 tracking-widest uppercase">CRM Cloud Access</h2>
+            </div>
+            
+            <form id="login-form" onsubmit="window.handleEmailLogin(event)" class="space-y-5">
+                <div>
+                    <label class="block text-[10px] uppercase tracking-widest font-black text-gray-500 mb-1.5">Official Email ID</label>
+                    <input type="email" id="login-email" required class="w-full p-3 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-brand-600 focus:border-brand-600 outline-none transition" placeholder="name@juviushealth.com">
+                </div>
+                <div>
+                    <label class="block text-[10px] uppercase tracking-widest font-black text-gray-500 mb-1.5">Password</label>
+                    <input type="password" id="login-password" required class="w-full p-3 bg-gray-50 border border-gray-200 rounded text-sm focus:ring-2 focus:ring-brand-600 focus:border-brand-600 outline-none transition" placeholder="••••••••">
+                </div>
+                
+                <div id="login-error" class="text-red-600 bg-red-50 p-2 rounded text-xs font-bold hidden text-center border border-red-100">Invalid credentials.</div>
+                
+                <button type="submit" id="login-btn" class="w-full bg-brand-600 text-white py-3.5 rounded shadow-md hover:bg-brand-700 uppercase text-sm font-black tracking-widest transition-colors mt-6">
+                    Secure Login
+                </button>
+            </form>
+        </div>
+    </div>
         
         <div class="mb-10 text-center flex flex-col items-center scale-in">
             <img src="https://drive.google.com/thumbnail?id=1GMNSIb_uMAwqBQxzp2PQTXMnhiH0Gv6-&sz=w800" alt="Juvius Logo" class="h-28 w-auto mb-6"> 
